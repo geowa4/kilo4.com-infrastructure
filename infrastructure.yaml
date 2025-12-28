@@ -1,6 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'VPC and networking infrastructure for kilo4 - foundational networking layer with public subnet and internet connectivity in us-east-2'
 
+Parameters:
+  SSHAllowedIP:
+    Type: String
+    Description: IP address in CIDR notation allowed to SSH to the instance (e.g., 1.2.3.4/32)
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'
+    ConstraintDescription: Must be a valid IP address in CIDR notation (e.g., 1.2.3.4/32)
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Description: SSM Parameter for latest Amazon Linux 2023 ARM64 AMI
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -92,3 +104,43 @@ Resources:
       InstanceProfileName: kilo4-EC2-InstanceProfile
       Roles:
         - !Ref EC2Role
+
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH from specific IP only
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHAllowedIP
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: kilo4-SSH-SecurityGroup
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t4g.small
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref SSHSecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          mkdir -p /home/ec2-user/.ssh
+          curl -s https://github.com/geowa4.keys >> /home/ec2-user/.ssh/authorized_keys
+          chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+          chmod 700 /home/ec2-user/.ssh
+          chmod 600 /home/ec2-user/.ssh/authorized_keys
+      Tags:
+        - Key: Name
+          Value: kilo4-Instance
+        - Key: Patch Group
+          Value: AmazonLinux2023
