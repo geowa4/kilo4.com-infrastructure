@@ -1,0 +1,464 @@
+#!/bin/bash
+set -euo pipefail
+
+#####################################################################
+# configure-patch-manager.sh
+# Configures AWS Systems Manager Patch Manager for kilo4 infrastructure
+# Region: us-east-2
+# Idempotent: Yes - checks for existing resources before creating
+#
+# Usage: ./configure-patch-manager.sh [EMAIL_ADDRESS]
+#   EMAIL_ADDRESS: Optional email address to subscribe to SNS notifications
+#####################################################################
+
+# Parse command line arguments
+EMAIL_ADDRESS="${1:-}"
+
+# Configuration Variables
+REGION="us-east-2"
+BASELINE_NAME="kilo4-AmazonLinux2023-Security-Baseline"
+MAINTENANCE_WINDOW_NAME="kilo4-PatchWindow-Sunday"
+PATCH_GROUP_TAG="AmazonLinux2023"
+SNS_TOPIC_NAME="kilo4-patch-notifications"
+SNS_ROLE_NAME="kilo4-SSM-SNS-NotificationRole"
+
+# Maintenance Window Schedule
+MW_SCHEDULE="cron(0 2 ? * SUN *)"  # Sundays at 2 AM UTC
+MW_DURATION=4                       # 4 hours
+MW_CUTOFF=1                         # Stop new tasks 1 hour before end
+
+# Patch Baseline Configuration
+CLASSIFICATIONS="Security,Bugfix"
+SEVERITIES="Critical,Important,Medium"
+APPROVE_AFTER_DAYS=7
+
+# Global variables to store resource IDs
+BASELINE_ID=""
+WINDOW_ID=""
+TARGET_ID=""
+TASK_ID=""
+SNS_TOPIC_ARN=""
+SNS_ROLE_ARN=""
+
+#####################################################################
+# Helper Functions
+#####################################################################
+
+log_info() {
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*"
+}
+
+log_warn() {
+    echo "[WARN]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_success() {
+    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*"
+}
+
+handle_error() {
+    log_error "Script failed at line $1"
+    exit 1
+}
+
+trap 'handle_error $LINENO' ERR
+
+#####################################################################
+# Prerequisites Check
+#####################################################################
+
+check_prerequisites() {
+    log_info "Checking prerequisites..."
+
+    if [[ -z "$EMAIL_ADDRESS" ]]; then
+        log_error "Email address is required"
+        log_error "Usage: $0 EMAIL_ADDRESS"
+        exit 1
+    fi
+
+    if ! command -v aws &> /dev/null; then
+        log_error "AWS CLI is not installed"
+        exit 1
+    fi
+
+    if ! aws sts get-caller-identity --region "$REGION" &> /dev/null; then
+        log_error "AWS credentials not configured or expired"
+        exit 1
+    fi
+
+    log_success "Prerequisites validated"
+}
+
+#####################################################################
+# Verify SSM Agent Status
+#####################################################################
+
+verify_ssm_agent() {
+    log_info "Verifying SSM Agent status..."
+
+    local instance_count
+    instance_count=$(aws ssm describe-instance-information \
+        --region "$REGION" \
+        --query 'length(InstanceInformationList)' \
+        --output text)
+
+    if [[ "$instance_count" -eq 0 ]]; then
+        log_error "No instances found in SSM Fleet Manager"
+        log_error "Ensure the EC2 instance is running and SSM Agent is active"
+        exit 1
+    fi
+
+    log_info "Found $instance_count instance(s) in SSM Fleet Manager"
+
+    # Display instance details
+    aws ssm describe-instance-information \
+        --region "$REGION" \
+        --query 'InstanceInformationList[*].[InstanceId,PingStatus,AgentVersion]' \
+        --output table
+
+    log_success "SSM Agent verification complete"
+}
+
+#####################################################################
+# Create SNS Topic
+#####################################################################
+
+create_sns_topic() {
+    log_info "Creating/verifying SNS topic: $SNS_TOPIC_NAME"
+
+    # create-topic is idempotent - returns existing ARN if topic exists
+    SNS_TOPIC_ARN=$(aws sns create-topic \
+        --name "$SNS_TOPIC_NAME" \
+        --region "$REGION" \
+        --query 'TopicArn' \
+        --output text)
+
+    log_success "SNS Topic ARN: $SNS_TOPIC_ARN"
+
+    # Subscribe email address
+    log_info "Subscribing $EMAIL_ADDRESS to SNS topic..."
+    aws sns subscribe \
+        --topic-arn "$SNS_TOPIC_ARN" \
+        --protocol email \
+        --notification-endpoint "$EMAIL_ADDRESS" \
+        --region "$REGION" > /dev/null
+    log_success "Subscription request sent to $EMAIL_ADDRESS"
+    log_info "Check your email and confirm the subscription to receive notifications"
+}
+
+#####################################################################
+# Create IAM Role for SNS Notifications
+#####################################################################
+
+create_sns_notification_role() {
+    log_info "Creating/verifying IAM role for SNS notifications: $SNS_ROLE_NAME"
+
+    # Check if role exists
+    if aws iam get-role --role-name "$SNS_ROLE_NAME" &> /dev/null; then
+        log_info "IAM role $SNS_ROLE_NAME already exists"
+        SNS_ROLE_ARN=$(aws iam get-role \
+            --role-name "$SNS_ROLE_NAME" \
+            --query 'Role.Arn' \
+            --output text)
+    else
+        log_info "Creating IAM role $SNS_ROLE_NAME"
+
+        # Trust policy for SSM
+        local trust_policy
+        trust_policy=$(cat <<'EOF'
+{
+    "Version": "2012-10-17",
+    "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"Service": "ssm.amazonaws.com"},
+        "Action": "sts:AssumeRole"
+    }]
+}
+EOF
+)
+
+        SNS_ROLE_ARN=$(aws iam create-role \
+            --role-name "$SNS_ROLE_NAME" \
+            --assume-role-policy-document "$trust_policy" \
+            --description "Role for SSM Patch Manager to publish SNS notifications" \
+            --query 'Role.Arn' \
+            --output text)
+
+        # Attach SNS publish policy
+        local sns_policy
+        sns_policy=$(cat <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [{
+        "Effect": "Allow",
+        "Action": ["sns:Publish"],
+        "Resource": "$SNS_TOPIC_ARN"
+    }]
+}
+EOF
+)
+
+        aws iam put-role-policy \
+            --role-name "$SNS_ROLE_NAME" \
+            --policy-name "SNSPublishPolicy" \
+            --policy-document "$sns_policy"
+
+        log_info "Waiting for IAM role propagation..."
+        sleep 10
+    fi
+
+    log_success "SNS Role ARN: $SNS_ROLE_ARN"
+}
+
+#####################################################################
+# Create Patch Baseline
+#####################################################################
+
+create_patch_baseline() {
+    log_info "Creating/verifying patch baseline: $BASELINE_NAME"
+
+    # Check if baseline already exists
+    local existing_baseline_id
+    existing_baseline_id=$(aws ssm describe-patch-baselines \
+        --region "$REGION" \
+        --filters "Key=OWNER,Values=Self" \
+        --query "BaselineIdentities[?BaselineName=='$BASELINE_NAME'].BaselineId | [0]" \
+        --output text)
+
+    if [[ "$existing_baseline_id" != "None" && -n "$existing_baseline_id" ]]; then
+        BASELINE_ID="$existing_baseline_id"
+        log_info "Patch baseline already exists with ID: $BASELINE_ID"
+    else
+        log_info "Creating new patch baseline..."
+
+        BASELINE_ID=$(aws ssm create-patch-baseline \
+            --name "$BASELINE_NAME" \
+            --operating-system "AMAZON_LINUX_2023" \
+            --description "Security and bugfix patches for Amazon Linux 2023 - kilo4 infrastructure" \
+            --approval-rules "PatchRules=[{PatchFilterGroup={PatchFilters=[{Key=CLASSIFICATION,Values=[$CLASSIFICATIONS]},{Key=SEVERITY,Values=[$SEVERITIES]}]},ApproveAfterDays=$APPROVE_AFTER_DAYS}]" \
+            --region "$REGION" \
+            --query 'BaselineId' \
+            --output text)
+
+        log_success "Created patch baseline with ID: $BASELINE_ID"
+    fi
+
+    # Register baseline with patch group
+    log_info "Registering baseline with patch group: $PATCH_GROUP_TAG"
+    aws ssm register-patch-baseline-for-patch-group \
+        --baseline-id "$BASELINE_ID" \
+        --patch-group "$PATCH_GROUP_TAG" \
+        --region "$REGION" 2>/dev/null || true  # Ignore error if already registered
+
+    log_success "Patch baseline configured: $BASELINE_ID"
+}
+
+#####################################################################
+# Create Maintenance Window
+#####################################################################
+
+create_maintenance_window() {
+    log_info "Creating/verifying maintenance window: $MAINTENANCE_WINDOW_NAME"
+
+    # Check if maintenance window already exists
+    local existing_window_id
+    existing_window_id=$(aws ssm describe-maintenance-windows \
+        --region "$REGION" \
+        --filters "Key=Name,Values=$MAINTENANCE_WINDOW_NAME" \
+        --query "WindowIdentities[0].WindowId" \
+        --output text)
+
+    if [[ "$existing_window_id" != "None" && -n "$existing_window_id" ]]; then
+        WINDOW_ID="$existing_window_id"
+        log_info "Maintenance window already exists with ID: $WINDOW_ID"
+    else
+        log_info "Creating new maintenance window..."
+
+        WINDOW_ID=$(aws ssm create-maintenance-window \
+            --name "$MAINTENANCE_WINDOW_NAME" \
+            --description "Weekly patching window for kilo4 instances - Sundays 2 AM UTC" \
+            --schedule "$MW_SCHEDULE" \
+            --schedule-timezone "UTC" \
+            --duration "$MW_DURATION" \
+            --cutoff "$MW_CUTOFF" \
+            --allow-unassociated-targets \
+            --region "$REGION" \
+            --query 'WindowId' \
+            --output text)
+
+        log_success "Created maintenance window with ID: $WINDOW_ID"
+    fi
+
+    log_success "Maintenance window configured: $WINDOW_ID"
+}
+
+#####################################################################
+# Register Maintenance Window Target
+#####################################################################
+
+register_maintenance_window_target() {
+    log_info "Registering maintenance window target for patch group: $PATCH_GROUP_TAG"
+
+    # Check if target already exists
+    local existing_target_id
+    existing_target_id=$(aws ssm describe-maintenance-window-targets \
+        --window-id "$WINDOW_ID" \
+        --region "$REGION" \
+        --query "Targets[?contains(Targets[].Values[], '$PATCH_GROUP_TAG')].WindowTargetId | [0]" \
+        --output text)
+
+    if [[ "$existing_target_id" != "None" && -n "$existing_target_id" ]]; then
+        TARGET_ID="$existing_target_id"
+        log_info "Target already registered with ID: $TARGET_ID"
+    else
+        log_info "Registering new target..."
+
+        TARGET_ID=$(aws ssm register-target-with-maintenance-window \
+            --window-id "$WINDOW_ID" \
+            --resource-type "INSTANCE" \
+            --targets "Key=tag:Patch Group,Values=$PATCH_GROUP_TAG" \
+            --name "kilo4-PatchGroup-Target" \
+            --description "Instances tagged with Patch Group: $PATCH_GROUP_TAG" \
+            --region "$REGION" \
+            --query 'WindowTargetId' \
+            --output text)
+
+        log_success "Registered target with ID: $TARGET_ID"
+    fi
+
+    log_success "Maintenance window target configured: $TARGET_ID"
+}
+
+#####################################################################
+# Register Patch Task
+#####################################################################
+
+register_patch_task() {
+    log_info "Registering patch task with SNS notifications"
+
+    # Check if task already exists
+    local existing_task_id
+    existing_task_id=$(aws ssm describe-maintenance-window-tasks \
+        --window-id "$WINDOW_ID" \
+        --region "$REGION" \
+        --filters "Key=TaskArn,Values=AWS-RunPatchBaseline" \
+        --query "Tasks[0].WindowTaskId" \
+        --output text)
+
+    if [[ "$existing_task_id" != "None" && -n "$existing_task_id" ]]; then
+        TASK_ID="$existing_task_id"
+        log_info "Patch task already registered with ID: $TASK_ID"
+    else
+        log_info "Registering new patch task..."
+
+        TASK_ID=$(aws ssm register-task-with-maintenance-window \
+            --window-id "$WINDOW_ID" \
+            --task-arn "AWS-RunPatchBaseline" \
+            --task-type "RUN_COMMAND" \
+            --targets "Key=WindowTargetIds,Values=$TARGET_ID" \
+            --name "kilo4-RunPatchBaseline" \
+            --priority 1 \
+            --max-concurrency "1" \
+            --max-errors "0" \
+            --task-invocation-parameters "{
+                \"RunCommand\": {
+                    \"Parameters\": {
+                        \"Operation\": [\"Install\"],
+                        \"RebootOption\": [\"RebootIfNeeded\"]
+                    },
+                    \"NotificationConfig\": {
+                        \"NotificationArn\": \"$SNS_TOPIC_ARN\",
+                        \"NotificationEvents\": [\"All\"],
+                        \"NotificationType\": \"Command\"
+                    },
+                    \"ServiceRoleArn\": \"$SNS_ROLE_ARN\"
+                }
+            }" \
+            --region "$REGION" \
+            --query 'WindowTaskId' \
+            --output text)
+
+        log_success "Registered patch task with ID: $TASK_ID"
+    fi
+
+    log_success "Patch task configured: $TASK_ID"
+}
+
+#####################################################################
+# Print Verification Summary
+#####################################################################
+
+print_verification_summary() {
+    echo ""
+    echo "=============================================="
+    echo "  Patch Manager Configuration Summary"
+    echo "=============================================="
+    echo ""
+    echo "Region:              $REGION"
+    echo "Patch Baseline:      $BASELINE_ID"
+    echo "  - Name:            $BASELINE_NAME"
+    echo "  - Classifications: $CLASSIFICATIONS"
+    echo "  - Severities:      $SEVERITIES"
+    echo "  - Auto-approve:    $APPROVE_AFTER_DAYS days"
+    echo ""
+    echo "Maintenance Window:  $WINDOW_ID"
+    echo "  - Name:            $MAINTENANCE_WINDOW_NAME"
+    echo "  - Schedule:        $MW_SCHEDULE (UTC)"
+    echo "  - Duration:        $MW_DURATION hours"
+    echo "  - Cutoff:          $MW_CUTOFF hour"
+    echo ""
+    echo "Target:              $TARGET_ID"
+    echo "  - Patch Group:     $PATCH_GROUP_TAG"
+    echo ""
+    echo "Task:                $TASK_ID"
+    echo "  - Operation:       Install"
+    echo "  - Reboot:          RebootIfNeeded"
+    echo ""
+    echo "SNS Topic:           $SNS_TOPIC_ARN"
+    echo "SNS Role:            $SNS_ROLE_ARN"
+    echo ""
+    echo "=============================================="
+    echo ""
+    echo "Verification Commands:"
+    echo ""
+    echo "# View patch baseline details"
+    echo "aws ssm get-patch-baseline --baseline-id $BASELINE_ID --region $REGION"
+    echo ""
+    echo "# View maintenance window"
+    echo "aws ssm describe-maintenance-windows --filters \"Key=Name,Values=$MAINTENANCE_WINDOW_NAME\" --region $REGION"
+    echo ""
+    echo "# View upcoming executions"
+    echo "aws ssm describe-maintenance-window-schedule --window-id $WINDOW_ID --region $REGION"
+    echo ""
+    echo "# Subscribe to SNS notifications"
+    echo "aws sns subscribe --topic-arn $SNS_TOPIC_ARN --protocol email --notification-endpoint YOUR_EMAIL --region $REGION"
+    echo ""
+}
+
+#####################################################################
+# Main Function
+#####################################################################
+
+main() {
+    echo ""
+    log_info "Starting Patch Manager configuration for kilo4 infrastructure"
+    echo ""
+
+    check_prerequisites
+    verify_ssm_agent
+    create_sns_topic
+    create_sns_notification_role
+    create_patch_baseline
+    create_maintenance_window
+    register_maintenance_window_target
+    register_patch_task
+    print_verification_summary
+
+    log_success "Patch Manager configuration complete!"
+}
+
+main "$@"
