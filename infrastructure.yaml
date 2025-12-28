@@ -57,3 +57,38 @@ Resources:
     Properties:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: kilo4-EC2-SSM-SES-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: SESEmailPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                  - ses:GetSendQuota
+                Resource: arn:aws:ses:us-east-2:*:identity/*
+      Tags:
+        - Key: Name
+          Value: kilo4-EC2-SSM-SES-Role
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: kilo4-EC2-InstanceProfile
+      Roles:
+        - !Ref EC2Role
