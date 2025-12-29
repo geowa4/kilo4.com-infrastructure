@@ -13,19 +13,28 @@ This repository contains AWS infrastructure-as-code for deploying a VPC, EC2 ins
 - EC2 instance (t4g.small ARM-based) with IAM role for SSM and SES
 - Security group restricting SSH to a single parameterized IP
 - SSH key provisioning from GitHub (https://github.com/geowa4.keys) via UserData
+- SNS topics for SES bounce/complaint notifications
+- CloudWatch alarms for SES reputation monitoring
 
 **Management Pattern**: AWS Systems Manager provides agentless configuration management. The `AWS-ApplyAnsiblePlaybooks` SSM document executes playbooks without a dedicated Ansible control node—SSM downloads playbooks from S3, installs Ansible on the target instance, and executes locally.
 
 **Region**: All resources are in us-east-2
 
-## CloudFormation Commands
+## CloudFormation Stack Management
 
-### Validate template
+### Update stack (recommended)
 ```bash
-aws cloudformation validate-template --template-body file://infrastructure.yaml --region us-east-2
+./scripts/update-stack.sh
 ```
 
-### Deploy stack (use update-stack for existing stack)
+This script automatically:
+- Fetches your current public IP
+- Validates the template
+- Updates the stack
+- Waits for completion
+- Displays outputs
+
+### Manual update
 ```bash
 aws cloudformation update-stack \
   --stack-name kilo4-Infrastructure \
@@ -33,10 +42,7 @@ aws cloudformation update-stack \
   --parameters ParameterKey=SSHAllowedIP,ParameterValue=<IP>/32 \
   --capabilities CAPABILITY_NAMED_IAM \
   --region us-east-2
-```
 
-### Wait for stack completion
-```bash
 aws cloudformation wait stack-update-complete --stack-name kilo4-Infrastructure --region us-east-2
 ```
 
@@ -93,6 +99,47 @@ aws ssm create-association \
   --schedule-expression "rate(1 day)" \
   --region us-east-2
 ```
+
+## Amazon SES Email Service
+
+### Overview
+- **Sender Domain**: kilo4.com
+- **Sender Address**: noreply@kilo4.com
+- **Status**: Domain verified with DKIM
+- **Mode**: Sandbox (200 emails/day, verified recipients only)
+
+### SES Scripts
+```bash
+# Verify email identity
+./scripts/verify-ses-identity.sh noreply@kilo4.com
+
+# Verify domain with DKIM
+./scripts/verify-ses-domain.sh kilo4.com
+
+# Send test email
+python3 scripts/test-ses-email.py \
+  --from noreply@kilo4.com \
+  --to recipient@example.com \
+  --subject "Test" \
+  --body "Test email"
+
+# Request production access
+./scripts/request-ses-production.sh \
+  --use-case "Transactional emails for user notifications"
+```
+
+### SES Infrastructure
+CloudFormation manages:
+- SNS topics for bounce/complaint notifications
+- CloudWatch alarms for reputation monitoring (>5% bounce, >0.1% complaint)
+
+Manual configuration required (no CloudFormation support):
+- Linking SES identity to SNS topics (documented in `docs/ses-production-checklist.md`)
+- SNS topic subscriptions
+
+### Documentation
+- `docs/ses-setup.md` - Complete SES setup guide
+- `docs/ses-production-checklist.md` - Production access prerequisites and checklist
 
 ## Important Constraints
 
