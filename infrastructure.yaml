@@ -70,6 +70,16 @@ Resources:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
+  AnsiblePlaybooksBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'kilo4-ansible-playbooks-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: kilo4-ansible-playbooks
+
   EC2Role:
     Type: AWS::IAM::Role
     Properties:
@@ -94,6 +104,17 @@ Resources:
                   - ses:SendRawEmail
                   - ses:GetSendQuota
                 Resource: arn:aws:ses:us-east-2:*:identity/*
+        - PolicyName: S3PlaybookAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt AnsiblePlaybooksBucket.Arn
+                  - !Sub '${AnsiblePlaybooksBucket.Arn}/*'
       Tags:
         - Key: Name
           Value: kilo4-EC2-SSM-SES-Role
@@ -144,3 +165,14 @@ Resources:
           Value: kilo4-Instance
         - Key: Patch Group
           Value: AmazonLinux2023
+
+Outputs:
+  AnsiblePlaybooksBucketName:
+    Value: !Ref AnsiblePlaybooksBucket
+    Description: S3 bucket name for Ansible playbooks
+  AnsiblePlaybooksBucketArn:
+    Value: !GetAtt AnsiblePlaybooksBucket.Arn
+    Description: S3 bucket ARN for Ansible playbooks
+  InstanceId:
+    Value: !Ref EC2Instance
+    Description: EC2 Instance ID for SSM commands

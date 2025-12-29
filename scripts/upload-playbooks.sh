@@ -1,0 +1,164 @@
+#!/bin/bash
+set -euo pipefail
+
+#####################################################################
+# upload-playbooks.sh
+# Uploads Ansible playbooks from local playbooks/ directory to S3
+# Region: us-east-2
+# Idempotent: Yes - uses s3 sync
+#
+# Usage: ./upload-playbooks.sh
+#####################################################################
+
+# Configuration Variables
+REGION="us-east-2"
+STACK_NAME="kilo4-Infrastructure"
+PLAYBOOKS_DIR="playbooks"
+
+#####################################################################
+# Helper Functions
+#####################################################################
+
+log_info() {
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*"
+}
+
+log_warn() {
+    echo "[WARN]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_success() {
+    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*"
+}
+
+handle_error() {
+    log_error "Script failed at line $1"
+    exit 1
+}
+
+trap 'handle_error $LINENO' ERR
+
+#####################################################################
+# Prerequisites Check
+#####################################################################
+
+check_prerequisites() {
+    log_info "Checking prerequisites..."
+
+    if ! command -v aws &> /dev/null; then
+        log_error "AWS CLI is not installed"
+        exit 1
+    fi
+
+    if ! aws sts get-caller-identity --region "$REGION" &> /dev/null; then
+        log_error "AWS credentials not configured or expired"
+        exit 1
+    fi
+
+    if [[ ! -d "$PLAYBOOKS_DIR" ]]; then
+        log_error "Playbooks directory not found: $PLAYBOOKS_DIR"
+        log_error "Please create the directory and add your playbooks"
+        exit 1
+    fi
+
+    log_success "Prerequisites validated"
+}
+
+#####################################################################
+# Get S3 Bucket Name from CloudFormation Stack
+#####################################################################
+
+get_bucket_name() {
+    log_info "Getting S3 bucket name from CloudFormation stack: $STACK_NAME"
+
+    local bucket_name
+    bucket_name=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='AnsiblePlaybooksBucketName'].OutputValue" \
+        --output text 2>/dev/null)
+
+    if [[ -z "$bucket_name" || "$bucket_name" == "None" ]]; then
+        log_error "Could not retrieve bucket name from stack outputs"
+        log_error "Ensure the CloudFormation stack '$STACK_NAME' exists and has the AnsiblePlaybooksBucketName output"
+        exit 1
+    fi
+
+    echo "$bucket_name"
+}
+
+#####################################################################
+# Upload Playbooks to S3
+#####################################################################
+
+upload_playbooks() {
+    local bucket_name="$1"
+
+    log_info "Uploading playbooks from $PLAYBOOKS_DIR/ to s3://$bucket_name/playbooks/"
+
+    # Count files to upload
+    local file_count
+    file_count=$(find "$PLAYBOOKS_DIR" -type f ! -name '.gitkeep' | wc -l | tr -d ' ')
+
+    if [[ "$file_count" -eq 0 ]]; then
+        log_warn "No playbook files found in $PLAYBOOKS_DIR/"
+        log_warn "Create playbooks before uploading"
+        exit 0
+    fi
+
+    log_info "Found $file_count file(s) to upload"
+
+    # Sync playbooks to S3
+    aws s3 sync "$PLAYBOOKS_DIR/" "s3://$bucket_name/playbooks/" \
+        --delete \
+        --exclude ".gitkeep" \
+        --region "$REGION"
+
+    log_success "Playbooks uploaded successfully to s3://$bucket_name/playbooks/"
+}
+
+#####################################################################
+# Verify Upload
+#####################################################################
+
+verify_upload() {
+    local bucket_name="$1"
+
+    log_info "Verifying uploaded playbooks..."
+
+    aws s3 ls "s3://$bucket_name/playbooks/" \
+        --recursive \
+        --human-readable \
+        --region "$REGION"
+
+    log_success "Upload verification complete"
+}
+
+#####################################################################
+# Main Function
+#####################################################################
+
+main() {
+    echo ""
+    log_info "Starting playbook upload to S3"
+    echo ""
+
+    check_prerequisites
+
+    local bucket_name
+    bucket_name=$(get_bucket_name)
+    log_success "S3 bucket: $bucket_name"
+
+    upload_playbooks "$bucket_name"
+    verify_upload "$bucket_name"
+
+    echo ""
+    log_success "Playbook upload complete!"
+    echo ""
+}
+
+main "$@"
