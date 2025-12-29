@@ -1,0 +1,139 @@
+#!/bin/bash
+# Verify domain identity in Amazon SES with DKIM
+# Usage: ./verify-ses-domain.sh <domain>
+
+set -euo pipefail
+
+REGION="us-east-2"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+usage() {
+    echo "Usage: $0 <domain>"
+    echo ""
+    echo "Example:"
+    echo "  $0 kilo4.com"
+    echo ""
+    echo "This script will:"
+    echo "  1. Request domain verification"
+    echo "  2. Enable DKIM for the domain"
+    echo "  3. Display DNS records to add to your domain"
+    echo "  4. Show verification status"
+    exit 1
+}
+
+if [ $# -ne 1 ]; then
+    usage
+fi
+
+DOMAIN="$1"
+
+echo "Amazon SES Domain Verification with DKIM"
+echo "Domain: $DOMAIN"
+echo "Region: $REGION"
+echo "========================================"
+echo ""
+
+# Step 1: Verify domain identity
+echo -e "${YELLOW}Step 1: Requesting domain verification...${NC}"
+
+VERIFICATION_TOKEN=$(aws ses verify-domain-identity \
+    --domain "$DOMAIN" \
+    --region "$REGION" \
+    --output json | jq -r '.VerificationToken')
+
+if [ -n "$VERIFICATION_TOKEN" ] && [ "$VERIFICATION_TOKEN" != "null" ]; then
+    echo -e "${GREEN}✓ Domain verification requested${NC}"
+    echo ""
+    echo -e "${BLUE}Add this TXT record to your DNS:${NC}"
+    echo "  Name:  _amazonses.$DOMAIN"
+    echo "  Type:  TXT"
+    echo "  Value: $VERIFICATION_TOKEN"
+    echo ""
+else
+    echo -e "${RED}✗ Failed to request domain verification${NC}"
+    exit 1
+fi
+
+# Step 2: Enable DKIM
+echo -e "${YELLOW}Step 2: Enabling DKIM for domain...${NC}"
+
+DKIM_TOKENS=$(aws ses verify-domain-dkim \
+    --domain "$DOMAIN" \
+    --region "$REGION" \
+    --output json | jq -r '.DkimTokens[]')
+
+if [ -n "$DKIM_TOKENS" ]; then
+    echo -e "${GREEN}✓ DKIM enabled${NC}"
+    echo ""
+    echo -e "${BLUE}Add these CNAME records to your DNS:${NC}"
+    echo ""
+
+    for TOKEN in $DKIM_TOKENS; do
+        echo "  Name:  ${TOKEN}._domainkey.$DOMAIN"
+        echo "  Type:  CNAME"
+        echo "  Value: ${TOKEN}.dkim.amazonses.com"
+        echo ""
+    done
+else
+    echo -e "${RED}✗ Failed to enable DKIM${NC}"
+    exit 1
+fi
+
+# Wait a moment for API consistency
+sleep 2
+
+# Step 3: Check verification status
+echo "=================================================="
+echo -e "${YELLOW}Step 3: Checking verification status...${NC}"
+echo ""
+
+DOMAIN_STATUS=$(aws ses get-identity-verification-attributes \
+    --identities "$DOMAIN" \
+    --region "$REGION" \
+    --output json | \
+    jq -r ".VerificationAttributes[\"$DOMAIN\"].VerificationStatus")
+
+DKIM_STATUS=$(aws ses get-identity-dkim-attributes \
+    --identities "$DOMAIN" \
+    --region "$REGION" \
+    --output json | \
+    jq -r ".DkimAttributes[\"$DOMAIN\"]")
+
+DKIM_ENABLED=$(echo "$DKIM_STATUS" | jq -r '.DkimEnabled')
+DKIM_VERIFICATION=$(echo "$DKIM_STATUS" | jq -r '.DkimVerificationStatus')
+
+echo "Domain Verification Status:"
+if [ "$DOMAIN_STATUS" = "Success" ]; then
+    echo -e "  ${GREEN}✓ $DOMAIN - Verified${NC}"
+else
+    echo -e "  ${YELLOW}⧗ $DOMAIN - $DOMAIN_STATUS${NC}"
+    echo "    (DNS propagation can take up to 72 hours)"
+fi
+
+echo ""
+echo "DKIM Status:"
+echo "  Enabled: $DKIM_ENABLED"
+if [ "$DKIM_VERIFICATION" = "Success" ]; then
+    echo -e "  Verification: ${GREEN}✓ $DKIM_VERIFICATION${NC}"
+else
+    echo -e "  Verification: ${YELLOW}⧗ $DKIM_VERIFICATION${NC}"
+    echo "    (DNS propagation can take up to 72 hours)"
+fi
+
+echo ""
+echo "=================================================="
+echo "Next steps:"
+echo "  1. Add the DNS records shown above to your domain"
+echo "  2. Wait for DNS propagation (check with: dig TXT _amazonses.$DOMAIN)"
+echo "  3. Re-run this script to confirm verification status"
+echo "  4. Once verified, request production access if needed"
+echo ""
+echo "To check DNS propagation:"
+echo "  dig TXT _amazonses.$DOMAIN +short"
+echo "  dig CNAME ${DKIM_TOKENS%% *}._domainkey.$DOMAIN +short"

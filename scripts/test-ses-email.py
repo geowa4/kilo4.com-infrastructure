@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""
+Test Amazon SES email sending using boto3
+This script uses IAM role credentials (no hardcoded keys required)
+"""
+
+import sys
+import argparse
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
+
+
+def send_test_email(sender, recipient, subject, body_text, body_html=None, region='us-east-2'):
+    """
+    Send a test email via Amazon SES
+
+    Args:
+        sender: Email address of the sender (must be verified in SES)
+        recipient: Email address of the recipient (must be verified in sandbox mode)
+        subject: Email subject line
+        body_text: Plain text body of the email
+        body_html: Optional HTML body of the email
+        region: AWS region (default: us-east-2)
+
+    Returns:
+        dict: Response from SES API if successful
+
+    Raises:
+        ClientError: If the SES API call fails
+        NoCredentialsError: If AWS credentials are not found
+    """
+    # Create SES client
+    ses_client = boto3.client('ses', region_name=region)
+
+    # Prepare email body
+    body = {'Text': {'Data': body_text, 'Charset': 'UTF-8'}}
+    if body_html:
+        body['Html'] = {'Data': body_html, 'Charset': 'UTF-8'}
+
+    try:
+        # Send email
+        response = ses_client.send_email(
+            Source=sender,
+            Destination={
+                'ToAddresses': [recipient]
+            },
+            Message={
+                'Subject': {
+                    'Data': subject,
+                    'Charset': 'UTF-8'
+                },
+                'Body': body
+            }
+        )
+
+        return response
+
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        error_message = e.response['Error']['Message']
+
+        # Provide helpful error messages
+        if error_code == 'MessageRejected':
+            if 'Email address is not verified' in error_message:
+                print(f"\n❌ Error: Email address not verified", file=sys.stderr)
+                print(f"   The sender or recipient email is not verified in SES.", file=sys.stderr)
+                print(f"   Run: ./scripts/verify-ses-identity.sh {sender} {recipient}", file=sys.stderr)
+            else:
+                print(f"\n❌ Error: Message rejected - {error_message}", file=sys.stderr)
+        elif error_code == 'MailFromDomainNotVerifiedException':
+            print(f"\n❌ Error: Domain not verified", file=sys.stderr)
+            print(f"   Run: ./scripts/verify-ses-domain.sh <domain>", file=sys.stderr)
+        elif error_code == 'ConfigurationSetDoesNotExist':
+            print(f"\n❌ Error: Configuration set does not exist", file=sys.stderr)
+        else:
+            print(f"\n❌ SES Error ({error_code}): {error_message}", file=sys.stderr)
+
+        raise
+
+    except NoCredentialsError:
+        print("\n❌ Error: AWS credentials not found", file=sys.stderr)
+        print("   Make sure you have configured AWS credentials via:", file=sys.stderr)
+        print("   - IAM role (when running on EC2)", file=sys.stderr)
+        print("   - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)", file=sys.stderr)
+        print("   - AWS CLI configuration (~/.aws/credentials)", file=sys.stderr)
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Send a test email via Amazon SES',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Send a simple test email
+  python3 test-ses-email.py \\
+      --from noreply@kilo4.com \\
+      --to recipient@example.com \\
+      --subject "Test Email" \\
+      --body "This is a test email from Amazon SES"
+
+  # Send HTML email
+  python3 test-ses-email.py \\
+      --from noreply@kilo4.com \\
+      --to recipient@example.com \\
+      --subject "Test HTML Email" \\
+      --body "This is the plain text version" \\
+      --html "<h1>Test Email</h1><p>This is the HTML version</p>"
+
+Note: In SES sandbox mode, both sender and recipient must be verified.
+      Run ./scripts/verify-ses-identity.sh to verify email addresses.
+        """
+    )
+
+    parser.add_argument('--from', dest='sender', required=True,
+                        help='Sender email address (must be verified in SES)')
+    parser.add_argument('--to', dest='recipient', required=True,
+                        help='Recipient email address (must be verified in sandbox mode)')
+    parser.add_argument('--subject', required=True,
+                        help='Email subject line')
+    parser.add_argument('--body', dest='body_text', required=True,
+                        help='Plain text body of the email')
+    parser.add_argument('--html', dest='body_html',
+                        help='Optional HTML body of the email')
+    parser.add_argument('--region', default='us-east-2',
+                        help='AWS region (default: us-east-2)')
+
+    args = parser.parse_args()
+
+    print(f"Sending test email via Amazon SES...")
+    print(f"  From:    {args.sender}")
+    print(f"  To:      {args.recipient}")
+    print(f"  Subject: {args.subject}")
+    print(f"  Region:  {args.region}")
+    print()
+
+    try:
+        response = send_test_email(
+            sender=args.sender,
+            recipient=args.recipient,
+            subject=args.subject,
+            body_text=args.body_text,
+            body_html=args.body_html,
+            region=args.region
+        )
+
+        message_id = response['MessageId']
+        print(f"✅ Email sent successfully!")
+        print(f"   Message ID: {message_id}")
+        print(f"\n📧 Check {args.recipient} inbox for the email")
+
+        return 0
+
+    except (ClientError, NoCredentialsError) as e:
+        print(f"\n🔍 Troubleshooting:")
+        print(f"   1. Verify email identities: ./scripts/verify-ses-identity.sh {args.sender} {args.recipient}")
+        print(f"   2. Check SES sending limits: aws ses get-send-quota --region {args.region}")
+        print(f"   3. View SES account status: aws ses get-account-sending-enabled --region {args.region}")
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
