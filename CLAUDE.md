@@ -64,6 +64,7 @@ Tasks are organized in `tasks/` directory:
 - `tasks/dev-plan.md` - Master implementation guide with detailed technical documentation
 
 When completing a task, move it from `tasks/todo/` to `tasks/done/`.
+Never commit tasks.
 
 ## Systems Manager Integration
 
