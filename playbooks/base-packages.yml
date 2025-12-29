@@ -1,0 +1,15 @@
+---
+- name: Install base development packages
+  hosts: localhost
+  become: true
+
+  vars:
+    base_packages:
+      - git
+      - golang
+
+  tasks:
+    - name: Install base development packages
+      ansible.builtin.dnf:
+        name: "{{ base_packages }}"
+        state: present

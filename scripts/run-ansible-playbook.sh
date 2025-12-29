@@ -3,16 +3,16 @@ set -euo pipefail
 
 #####################################################################
 # run-ansible-playbook.sh
-# Executes an Ansible playbook on EC2 instances via SSM Run Command
+# Uploads and executes an Ansible playbook on EC2 instances via SSM Run Command
 # Region: us-east-2
 #
-# Usage: ./run-ansible-playbook.sh <playbook-name.yml> [instance-id]
-#   playbook-name.yml: Name of the playbook in S3 bucket (e.g., hardening.yml)
-#   instance-id: Optional EC2 instance ID (defaults to tag:Name=kilo4-Instance)
+# Usage: ./run-ansible-playbook.sh <playbook-path> [instance-id]
+#   playbook-path: Local path to playbook (e.g., ansible/hardening-playbook.yml)
+#   instance-id: Optional EC2 instance ID (defaults to CloudFormation output)
 #####################################################################
 
 # Parse command line arguments
-PLAYBOOK_NAME="${1:-}"
+PLAYBOOK_PATH="${1:-}"
 INSTANCE_ID="${2:-}"
 
 # Configuration Variables
@@ -26,7 +26,7 @@ TIMEOUT_SECONDS=600
 #####################################################################
 
 log_info() {
-    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
 }
 
 log_warn() {
@@ -38,7 +38,7 @@ log_error() {
 }
 
 log_success() {
-    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
 }
 
 handle_error() {
@@ -55,10 +55,15 @@ trap 'handle_error $LINENO' ERR
 check_prerequisites() {
     log_info "Checking prerequisites..."
 
-    if [[ -z "$PLAYBOOK_NAME" ]]; then
-        log_error "Playbook name is required"
-        log_error "Usage: $0 PLAYBOOK_NAME [INSTANCE_ID]"
-        log_error "Example: $0 hardening.yml"
+    if [[ -z "$PLAYBOOK_PATH" ]]; then
+        log_error "Playbook path is required"
+        log_error "Usage: $0 PLAYBOOK_PATH [INSTANCE_ID]"
+        log_error "Example: $0 ansible/hardening-playbook.yml"
+        exit 1
+    fi
+
+    if [[ ! -f "$PLAYBOOK_PATH" ]]; then
+        log_error "Playbook file not found: $PLAYBOOK_PATH"
         exit 1
     fi
 
@@ -121,14 +126,36 @@ get_instance_id() {
 }
 
 #####################################################################
+# Upload Playbook to S3
+#####################################################################
+
+upload_playbook() {
+    local bucket_name="$1"
+    local playbook_name
+    playbook_name=$(basename "$PLAYBOOK_PATH")
+
+    log_info "Uploading playbook to S3: $playbook_name"
+
+    aws s3 cp "$PLAYBOOK_PATH" \
+        "s3://$bucket_name/playbooks/$playbook_name" \
+        --region "$REGION" \
+        --only-show-errors
+
+    log_success "Playbook uploaded to s3://$bucket_name/playbooks/$playbook_name"
+
+    echo "$playbook_name"
+}
+
+#####################################################################
 # Execute Ansible Playbook via SSM
 #####################################################################
 
 execute_playbook() {
     local bucket_name="$1"
     local instance_id="$2"
+    local playbook_name="$3"
 
-    log_info "Executing playbook: $PLAYBOOK_NAME"
+    log_info "Executing playbook: $playbook_name"
     log_info "Target instance: $instance_id"
     log_info "S3 source: s3://$bucket_name/playbooks/"
 
@@ -139,9 +166,9 @@ execute_playbook() {
         --instance-ids "$instance_id" \
         --parameters '{
             "SourceType": ["S3"],
-            "SourceInfo": ["{\"path\":\"https://s3.amazonaws.com/'"$bucket_name"'/playbooks/\"}"],
+            "SourceInfo": ["{\"path\":\"https://s3.'"$REGION"'.amazonaws.com/'"$bucket_name"'/playbooks/'"$playbook_name"'\"}"],
             "InstallDependencies": ["True"],
-            "PlaybookFile": ["'"$PLAYBOOK_NAME"'"],
+            "PlaybookFile": ["'"$playbook_name"'"],
             "ExtraVariables": ["SSM=True"],
             "Verbose": ["-v"]
         }' \
@@ -186,6 +213,7 @@ display_output() {
 
     log_info "Retrieving command output..."
 
+    # Get basic invocation status
     local invocation
     invocation=$(aws ssm get-command-invocation \
         --command-id "$command_id" \
@@ -196,13 +224,24 @@ display_output() {
     local status
     status=$(echo "$invocation" | jq -r '.Status')
 
-    echo ""
-    echo "=============================================="
-    echo "  Command Execution Results"
-    echo "=============================================="
-    echo ""
-    echo "Status: $status"
-    echo ""
+    # Get plugin outputs (AWS-ApplyAnsiblePlaybooks has multiple plugins)
+    # Note: Output may be truncated by SSM if too large
+    local plugin_output
+    plugin_output=$(aws ssm get-command-invocation \
+        --command-id "$command_id" \
+        --instance-id "$instance_id" \
+        --plugin-name "runShellScript" \
+        --region "$REGION" \
+        --query 'StandardOutputContent' \
+        --output text 2>/dev/null || echo "Output not available")
+
+    echo "" >&2
+    echo "==============================================" >&2
+    echo "  Command Execution Results" >&2
+    echo "==============================================" >&2
+    echo "" >&2
+    echo "Status: $status" >&2
+    echo "" >&2
 
     if [[ "$status" == "Success" ]]; then
         log_success "Playbook execution succeeded"
@@ -210,23 +249,20 @@ display_output() {
         log_error "Playbook execution status: $status"
     fi
 
-    echo ""
-    echo "Standard Output:"
-    echo "----------------------------------------------"
-    echo "$invocation" | jq -r '.StandardOutputContent'
-    echo ""
+    echo "" >&2
+    echo "Ansible Output:" >&2
+    echo "----------------------------------------------" >&2
 
-    local stderr
-    stderr=$(echo "$invocation" | jq -r '.StandardErrorContent')
-    if [[ -n "$stderr" && "$stderr" != "null" ]]; then
-        echo "Standard Error:"
-        echo "----------------------------------------------"
-        echo "$stderr"
-        echo ""
+    # Extract and display Ansible play output (skip dependency installation noise)
+    if echo "$plugin_output" | grep -q "PLAY \["; then
+        echo "$plugin_output" | sed -n '/PLAY \[/,$p'
+    else
+        echo "$plugin_output"
     fi
 
-    echo "=============================================="
-    echo ""
+    echo "" >&2
+    echo "==============================================" >&2
+    echo "" >&2
 
     # Return exit code based on status
     if [[ "$status" != "Success" ]]; then
@@ -239,9 +275,9 @@ display_output() {
 #####################################################################
 
 main() {
-    echo ""
+    echo "" >&2
     log_info "Starting Ansible playbook execution via SSM Run Command"
-    echo ""
+    echo "" >&2
 
     check_prerequisites
 
@@ -251,14 +287,17 @@ main() {
     local instance_id
     instance_id=$(get_instance_id)
 
+    local playbook_name
+    playbook_name=$(upload_playbook "$bucket_name")
+
     local command_id
-    command_id=$(execute_playbook "$bucket_name" "$instance_id")
+    command_id=$(execute_playbook "$bucket_name" "$instance_id" "$playbook_name")
 
     wait_for_completion "$command_id" "$instance_id"
     display_output "$command_id" "$instance_id"
 
     log_success "Playbook execution complete!"
-    echo ""
+    echo "" >&2
 }
 
 main "$@"

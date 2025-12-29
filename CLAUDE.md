@@ -72,9 +72,53 @@ Tasks are organized in `tasks/` directory:
 When completing a task, move it from `tasks/todo/` to `tasks/done/`.
 Never commit tasks.
 
+## Ansible Playbooks
+
+### Running Playbooks
+
+Execute playbooks on the EC2 instance via SSM using the consolidated script:
+
+```bash
+./scripts/run-ansible-playbook.sh playbooks/hardening.yml
+```
+
+The script automatically:
+- Validates the playbook file exists
+- Retrieves instance ID and S3 bucket from CloudFormation stack outputs
+- Uploads the playbook to S3
+- Executes it via SSM `AWS-ApplyAnsiblePlaybooks` document
+- Waits for completion and displays results
+
+### Authoring Playbooks
+
+Playbooks are stored in `playbooks/` directory. Follow these conventions:
+
+**Naming**: Use descriptive names without redundancy (e.g., `hardening.yml`, not `hardening-playbook.yml`)
+
+**Requirements**:
+- Must pass `uv run ansible-lint playbooks/<name>.yml` with production profile
+- Use `become: true` (not `yes`) for privilege escalation
+- Use `true`/`false` for all boolean values (not `yes`/`no`)
+- Handler names must start with uppercase letter
+- All tasks must be idempotent (safe to run multiple times)
+
+**Validation**:
+```bash
+# YAML syntax
+uv run python -c "import yaml; yaml.safe_load(open('playbooks/<name>.yml'))"
+
+# Ansible best practices
+uv run ansible-lint playbooks/<name>.yml
+```
+
+### Existing Playbooks
+
+- `playbooks/hardening.yml` - System hardening (SSH, firewall, fail2ban)
+- `playbooks/base-packages.yml` - Development tools (git, golang)
+
 ## Systems Manager Integration
 
-### Execute Ansible playbook via SSM Run Command
+### Manual SSM Command (not recommended - use script instead)
 ```bash
 aws ssm send-command \
   --document-name "AWS-ApplyAnsiblePlaybooks" \
