@@ -166,6 +166,52 @@ Resources:
         - Key: Patch Group
           Value: AmazonLinux2023
 
+  SESBouncesTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: kilo4-ses-bounces
+      DisplayName: SES Bounce Notifications
+      Tags:
+        - Key: Name
+          Value: kilo4-ses-bounces
+
+  SESComplaintsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: kilo4-ses-complaints
+      DisplayName: SES Complaint Notifications
+      Tags:
+        - Key: Name
+          Value: kilo4-ses-complaints
+
+  SESHighBounceRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: kilo4-ses-high-bounce-rate
+      AlarmDescription: Alert when SES bounce rate exceeds 5%
+      MetricName: Reputation.BounceRate
+      Namespace: AWS/SES
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0.05
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  SESHighComplaintRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: kilo4-ses-high-complaint-rate
+      AlarmDescription: Alert when SES complaint rate exceeds 0.1%
+      MetricName: Reputation.ComplaintRate
+      Namespace: AWS/SES
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0.001
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
 Outputs:
   AnsiblePlaybooksBucketName:
     Value: !Ref AnsiblePlaybooksBucket
@@ -176,3 +222,9 @@ Outputs:
   InstanceId:
     Value: !Ref EC2Instance
     Description: EC2 Instance ID for SSM commands
+  SESBouncesTopicArn:
+    Value: !Ref SESBouncesTopic
+    Description: SNS Topic ARN for SES bounce notifications
+  SESComplaintsTopicArn:
+    Value: !Ref SESComplaintsTopic
+    Description: SNS Topic ARN for SES complaint notifications
