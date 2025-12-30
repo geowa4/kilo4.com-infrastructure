@@ -137,3 +137,27 @@ echo ""
 echo "To check DNS propagation:"
 echo "  dig TXT _amazonses.$DOMAIN +short"
 echo "  dig CNAME ${DKIM_TOKENS%% *}._domainkey.$DOMAIN +short"
+echo ""
+
+# Automatically check DNS propagation
+echo "=================================================="
+echo -e "${YELLOW}Checking DNS propagation...${NC}"
+echo ""
+
+# Check TXT record
+TXT_RESULT=$(dig TXT "_amazonses.$DOMAIN" +short 2>/dev/null || echo "")
+if [[ -n "$TXT_RESULT" ]]; then
+    echo -e "${GREEN}✓ TXT record found:${NC} $TXT_RESULT"
+else
+    echo -e "${YELLOW}⧗ TXT record not yet propagated${NC}"
+fi
+
+# Check first DKIM CNAME
+FIRST_TOKEN="${DKIM_TOKENS%% *}"
+CNAME_RESULT=$(dig CNAME "${FIRST_TOKEN}._domainkey.$DOMAIN" +short 2>/dev/null || echo "")
+if [[ -n "$CNAME_RESULT" ]]; then
+    echo -e "${GREEN}✓ DKIM CNAME record found:${NC} $CNAME_RESULT"
+else
+    echo -e "${YELLOW}⧗ DKIM CNAME record not yet propagated${NC}"
+fi
+echo ""
