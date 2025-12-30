@@ -6,19 +6,11 @@
           {
             "type": "command",
             "command": "mise run validate:playbooks"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
+          },
+                    {
             "type": "command",
             "command": "mise run validate:shell"
-          }
-        ]
-      },
-      {
-        "hooks": [
+          },
           {
             "type": "command",
             "command": "mise run validate:cloudformation"
