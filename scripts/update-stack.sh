@@ -28,7 +28,7 @@ usage() {
     exit 1
 }
 
-if [ "$#" -gt 0 ] && [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+if [ "$#" -gt 0 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
     usage
 fi
 
