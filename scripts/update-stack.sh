@@ -4,9 +4,13 @@
 
 set -euo pipefail
 
+# Get script directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 REGION="us-east-2"
 STACK_NAME="kilo4-Infrastructure"
-TEMPLATE_FILE="infrastructure.yaml"
+TEMPLATE_FILE="$PROJECT_ROOT/infrastructure.yaml"
 
 # Colors for output
 RED='\033[0;31m'
@@ -53,15 +57,22 @@ echo ""
 
 # Step 2: Validate template
 echo -e "${YELLOW}Step 2: Validating CloudFormation template...${NC}"
+echo "  Template file: $TEMPLATE_FILE"
+
+if [[ ! -f "$TEMPLATE_FILE" ]]; then
+    echo -e "${RED}✗ Template file not found: $TEMPLATE_FILE${NC}"
+    exit 1
+fi
 
 VALIDATION_RESULT=$(aws cloudformation validate-template \
     --template-body file://"$TEMPLATE_FILE" \
     --region "$REGION" 2>&1)
 
-if [ $? -eq 0 ]; then
+VALIDATION_EXIT_CODE=$?
+if [ $VALIDATION_EXIT_CODE -eq 0 ]; then
     echo -e "${GREEN}✓ Template is valid${NC}"
 else
-    echo -e "${RED}✗ Template validation failed${NC}"
+    echo -e "${RED}✗ Template validation failed (exit code: $VALIDATION_EXIT_CODE)${NC}"
     echo "$VALIDATION_RESULT"
     exit 1
 fi
@@ -71,8 +82,13 @@ echo ""
 # Step 3: Update stack
 echo -e "${YELLOW}Step 3: Updating CloudFormation stack...${NC}"
 echo "  SSH Allowed IP: ${CURRENT_IP}/32"
+echo "  Template: $TEMPLATE_FILE"
+echo "  Stack: $STACK_NAME"
+echo "  Region: $REGION"
 echo ""
 
+# Temporarily disable set -e so we can capture and handle the exit code
+set +e
 UPDATE_RESULT=$(aws cloudformation update-stack \
     --stack-name "$STACK_NAME" \
     --template-body file://"$TEMPLATE_FILE" \
@@ -81,6 +97,8 @@ UPDATE_RESULT=$(aws cloudformation update-stack \
     --region "$REGION" 2>&1)
 
 UPDATE_EXIT_CODE=$?
+set -e
+echo "  Update command exit code: $UPDATE_EXIT_CODE"
 
 if [ $UPDATE_EXIT_CODE -eq 0 ]; then
     echo -e "${GREEN}✓ Stack update initiated${NC}"

@@ -25,7 +25,7 @@ SCHEDULE="rate(1 day)"
 #####################################################################
 
 log_info() {
-    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
 }
 
 log_warn() {
@@ -37,7 +37,7 @@ log_error() {
 }
 
 log_success() {
-    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
 }
 
 handle_error() {
@@ -148,7 +148,7 @@ create_association() {
     local association_id
     association_id=$(aws ssm create-association \
         --name "AWS-ApplyAnsiblePlaybooks" \
-        --targets "Key=tag:$TARGET_TAG,Values=" \
+        --targets "Key=tag:Name,Values=kilo4-Instance" \
         --parameters '{
             "SourceType": ["S3"],
             "SourceInfo": ["{\"path\":\"https://s3.amazonaws.com/'"$bucket_name"'/playbooks/\"}"],
@@ -159,7 +159,7 @@ create_association() {
         }' \
         --association-name "$association_name" \
         --schedule-expression "$SCHEDULE" \
-        --apply-only-at-cron-interval false \
+        --no-apply-only-at-cron-interval \
         --region "$REGION" \
         --query 'AssociationDescription.AssociationId' \
         --output text)

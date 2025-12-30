@@ -10,17 +10,21 @@ set -euo pipefail
 # Usage: ./upload-playbooks.sh
 #####################################################################
 
+# Get script directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Configuration Variables
 REGION="us-east-2"
 STACK_NAME="kilo4-Infrastructure"
-PLAYBOOKS_DIR="playbooks"
+PLAYBOOKS_DIR="$PROJECT_ROOT/playbooks"
 
 #####################################################################
 # Helper Functions
 #####################################################################
 
 log_info() {
-    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
 }
 
 log_warn() {
@@ -32,7 +36,7 @@ log_error() {
 }
 
 log_success() {
-    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
 }
 
 handle_error() {

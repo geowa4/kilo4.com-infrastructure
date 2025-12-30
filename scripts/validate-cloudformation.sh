@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# Check if infrastructure.yaml has changed
+if ! git diff --name-only | grep -q "^infrastructure.yaml$"; then
+    exit 0
+fi
+
+echo "CloudFormation template changes detected, running validation..." >&2
+
+if ! aws cloudformation validate-template \
+    --template-body file://infrastructure.yaml \
+    --region us-east-2 2>&1; then
+    echo "" >&2
+    echo "CloudFormation template validation failed - please fix the errors above." >&2
+    exit 2
+fi
+
+echo "CloudFormation template validation passed" >&2

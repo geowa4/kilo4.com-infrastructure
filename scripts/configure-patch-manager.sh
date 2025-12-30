@@ -45,7 +45,7 @@ SNS_ROLE_ARN=""
 #####################################################################
 
 log_info() {
-    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
 }
 
 log_warn() {
@@ -57,7 +57,7 @@ log_error() {
 }
 
 log_success() {
-    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*"
+    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
 }
 
 handle_error() {

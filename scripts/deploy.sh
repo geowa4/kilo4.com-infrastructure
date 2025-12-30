@@ -141,6 +141,7 @@ deploy_or_update_stack() {
     else
         log_info "Stack exists with status: $stack_status. Updating..."
         "$SCRIPT_DIR/update-stack.sh"
+        log_success "Stack update completed"
     fi
 }
 
