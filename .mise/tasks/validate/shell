@@ -29,12 +29,13 @@ for f in $changed_scripts; do
             errors=1
         fi
 
-        # Run shellcheck if available
-        if command -v shellcheck &>/dev/null; then
-            if ! shellcheck "$f" 2>&1; then
-                echo "shellcheck failed for $f" >&2
-                errors=1
-            fi
+        # Auto-format with shfmt
+        shfmt --simplify --indent 4 --write "$f"
+
+        # Run shellcheck
+        if ! shellcheck "$f" 2>&1; then
+            echo "shellcheck failed for $f" >&2
+            errors=1
         fi
     fi
 done
