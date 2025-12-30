@@ -24,10 +24,10 @@ This repository contains AWS infrastructure-as-code for deploying a VPC, EC2 ins
 
 ### Update stack (recommended)
 ```bash
-./scripts/infra/update-stack.sh
+mise run infra:update-stack
 ```
 
-This script automatically:
+This task automatically:
 - Fetches your current public IP
 - Validates the template
 - Updates the stack
@@ -62,9 +62,28 @@ aws ec2 describe-instances \
   --region us-east-2
 ```
 
-## Task Management
+## Mise Tasks
 
-Tasks are organized in `tasks/` directory:
+All operational tasks are managed via mise. Tasks are defined in `.mise/tasks/` with the following namespaces:
+
+- `deploy` / `teardown` - Full deployment/teardown
+- `infra:*` - Infrastructure operations (CloudFormation, Ansible, Patch Manager)
+- `ses:*` - Amazon SES email configuration
+- `validate:*` - Code/config validation
+
+List all available tasks:
+```bash
+mise tasks
+```
+
+Run a task:
+```bash
+mise run <task-name>
+```
+
+## Development Task Management
+
+Development tasks are organized in `tasks/` directory:
 - `tasks/todo/` - Pending tasks with requirements and acceptance criteria
 - `tasks/done/` - Completed tasks (moved from todo after completion)
 - `tasks/dev-plan.md` - Master implementation guide with detailed technical documentation
@@ -76,13 +95,13 @@ Never commit tasks.
 
 ### Running Playbooks
 
-Execute playbooks on the EC2 instance via SSM using the consolidated script:
+Execute playbooks on the EC2 instance via SSM using the consolidated task:
 
 ```bash
-./scripts/infra/run-ansible-playbook.sh playbooks/hardening.yml
+mise run infra:run-ansible-playbook playbooks/hardening.yml
 ```
 
-The script automatically:
+The task automatically:
 - Validates the playbook file exists
 - Retrieves instance ID and S3 bucket from CloudFormation stack outputs
 - Uploads the playbook to S3
@@ -118,7 +137,7 @@ uv run ansible-lint playbooks/<name>.yml
 
 ## Systems Manager Integration
 
-### Manual SSM Command (not recommended - use script instead)
+### Manual SSM Command (not recommended - use task instead)
 ```bash
 aws ssm send-command \
   --document-name "AWS-ApplyAnsiblePlaybooks" \
@@ -152,23 +171,23 @@ aws ssm create-association \
 - **Status**: Domain verified with DKIM
 - **Mode**: Sandbox (200 emails/day, verified recipients only)
 
-### SES Scripts
+### SES Tasks
 ```bash
 # Verify email identity
-./scripts/ses/verify-identity.sh noreply@kilo4.com
+mise run ses:verify-identity noreply@kilo4.com
 
 # Verify domain with DKIM
-./scripts/ses/verify-domain.sh kilo4.com
+mise run ses:verify-domain kilo4.com
 
 # Send test email
-python3 scripts/ses/test-email.py \
+mise run ses:test-email -- \
   --from noreply@kilo4.com \
   --to recipient@example.com \
   --subject "Test" \
   --body "Test email"
 
 # Request production access
-./scripts/ses/request-production.sh \
+mise run ses:request-production -- \
   --use-case "Transactional emails for user notifications"
 ```
 

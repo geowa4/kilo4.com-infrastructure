@@ -1,6 +1,5 @@
-#!/bin/bash
-# Verify email identities in Amazon SES
-# Usage: ./verify-ses-identity.sh <email-address> [additional-email-addresses...]
+#!/usr/bin/env bash
+#MISE description="Verify email identities in Amazon SES"
 
 set -euo pipefail
 
@@ -13,11 +12,11 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 usage() {
-    echo "Usage: $0 <email-address> [additional-email-addresses...]"
+    echo "Usage: mise run ses:verify-identity EMAIL [EMAIL...]"
     echo ""
     echo "Examples:"
-    echo "  $0 noreply@kilo4.com"
-    echo "  $0 noreply@kilo4.com test@example.com"
+    echo "  mise run ses:verify-identity noreply@kilo4.com"
+    echo "  mise run ses:verify-identity noreply@kilo4.com test@example.com"
     echo ""
     echo "This script will:"
     echo "  1. Request verification for each email address"
@@ -88,4 +87,4 @@ echo "Next steps:"
 echo "  1. Check email inbox for verification links"
 echo "  2. Click the verification link in each email"
 echo "  3. Re-run this script to confirm verification status"
-echo "  4. Once verified, test with: python3 scripts/test-ses-email.py"
+echo "  4. Once verified, test with: mise run ses:test-email"

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#MISE description="Send test email via Amazon SES"
 """
 Test Amazon SES email sending using boto3
 This script uses IAM role credentials (no hardcoded keys required)
@@ -64,12 +65,12 @@ def send_test_email(sender, recipient, subject, body_text, body_html=None, regio
             if 'Email address is not verified' in error_message:
                 print(f"\n❌ Error: Email address not verified", file=sys.stderr)
                 print(f"   The sender or recipient email is not verified in SES.", file=sys.stderr)
-                print(f"   Run: ./scripts/verify-ses-identity.sh {sender} {recipient}", file=sys.stderr)
+                print(f"   Run: mise run ses:verify-identity {sender} {recipient}", file=sys.stderr)
             else:
                 print(f"\n❌ Error: Message rejected - {error_message}", file=sys.stderr)
         elif error_code == 'MailFromDomainNotVerifiedException':
             print(f"\n❌ Error: Domain not verified", file=sys.stderr)
-            print(f"   Run: ./scripts/verify-ses-domain.sh <domain>", file=sys.stderr)
+            print(f"   Run: mise run ses:verify-domain <domain>", file=sys.stderr)
         elif error_code == 'ConfigurationSetDoesNotExist':
             print(f"\n❌ Error: Configuration set does not exist", file=sys.stderr)
         else:
@@ -93,14 +94,14 @@ def main():
         epilog="""
 Examples:
   # Send a simple test email
-  python3 test-ses-email.py \\
+  mise run ses:test-email -- \\
       --from noreply@kilo4.com \\
       --to recipient@example.com \\
       --subject "Test Email" \\
       --body "This is a test email from Amazon SES"
 
   # Send HTML email
-  python3 test-ses-email.py \\
+  mise run ses:test-email -- \\
       --from noreply@kilo4.com \\
       --to recipient@example.com \\
       --subject "Test HTML Email" \\
@@ -108,7 +109,7 @@ Examples:
       --html "<h1>Test Email</h1><p>This is the HTML version</p>"
 
 Note: In SES sandbox mode, both sender and recipient must be verified.
-      Run ./scripts/verify-ses-identity.sh to verify email addresses.
+      Run mise run ses:verify-identity to verify email addresses.
         """
     )
 
@@ -153,7 +154,7 @@ Note: In SES sandbox mode, both sender and recipient must be verified.
 
     except (ClientError, NoCredentialsError) as e:
         print(f"\n🔍 Troubleshooting:")
-        print(f"   1. Verify email identities: ./scripts/verify-ses-identity.sh {args.sender} {args.recipient}")
+        print(f"   1. Verify email identities: mise run ses:verify-identity {args.sender} {args.recipient}")
         print(f"   2. Check SES sending limits: aws ses get-send-quota --region {args.region}")
         print(f"   3. View SES account status: aws ses get-account-sending-enabled --region {args.region}")
         return 1

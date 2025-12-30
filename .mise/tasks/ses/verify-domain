@@ -1,6 +1,5 @@
-#!/bin/bash
-# Verify domain identity in Amazon SES with DKIM
-# Usage: ./verify-ses-domain.sh <domain>
+#!/usr/bin/env bash
+#MISE description="Verify domain identity in Amazon SES with DKIM"
 
 set -euo pipefail
 
@@ -14,10 +13,10 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 usage() {
-    echo "Usage: $0 <domain>"
+    echo "Usage: mise run ses:verify-domain DOMAIN"
     echo ""
     echo "Example:"
-    echo "  $0 kilo4.com"
+    echo "  mise run ses:verify-domain kilo4.com"
     echo ""
     echo "This script will:"
     echo "  1. Request domain verification"

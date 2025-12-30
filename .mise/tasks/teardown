@@ -1,15 +1,7 @@
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/env bash
+#MISE description="Tear down all kilo4 infrastructure resources"
 
-#####################################################################
-# teardown.sh
-# Tears down all kilo4 infrastructure resources
-# Region: us-east-2
-# Idempotent: Yes - gracefully handles missing resources
-#
-# Usage: ./teardown.sh [--force]
-#   --force: Skip confirmation prompt
-#####################################################################
+set -euo pipefail
 
 # Parse command line arguments
 FORCE=false
@@ -49,7 +41,7 @@ handle_error() {
 trap 'handle_error $LINENO' ERR
 
 usage() {
-    echo "Usage: $0 [--force]"
+    echo "Usage: mise run teardown [-- --force]"
     echo ""
     echo "Tears down all kilo4 infrastructure resources:"
     echo "  - State Manager associations"

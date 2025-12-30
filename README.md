@@ -4,13 +4,14 @@ AWS infrastructure for kilo4.com using CloudFormation in us-east-2.
 
 ## Deploy
 
+Complete infrastructure deployment:
 ```bash
-aws cloudformation update-stack \
-  --stack-name kilo4-Infrastructure \
-  --template-body file://infrastructure.yaml \
-  --parameters ParameterKey=SSHAllowedIP,ParameterValue=YOUR.IP/32 \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region us-east-2
+mise run deploy
+```
+
+Or update just the CloudFormation stack:
+```bash
+mise run infra:update-stack
 ```
 
 ## Connect
@@ -26,6 +27,21 @@ aws ec2 describe-instances \
 # SSH
 ssh ec2-user@<INSTANCE_IP>
 ```
+
+## Available Tasks
+
+List all tasks:
+```bash
+mise tasks
+```
+
+Common tasks:
+- `mise run deploy` - Deploy complete infrastructure
+- `mise run teardown` - Tear down all resources
+- `mise run infra:update-stack` - Update CloudFormation stack
+- `mise run infra:run-ansible-playbook PLAYBOOK` - Run Ansible playbook
+- `mise run ses:verify-domain DOMAIN` - Verify SES domain
+- `mise run validate:playbooks` - Validate Ansible playbooks
 
 ## Stack Contents
 

@@ -1,0 +1,7 @@
+[env]
+PROJECT_NAME = "kilo4"
+
+[tools]
+jq = "latest"
+python = "3.14.2"
+shellcheck = "latest"

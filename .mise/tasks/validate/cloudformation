@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#MISE description="Validate CloudFormation template"
 set -uo pipefail
 
 # Check if infrastructure.yaml has changed

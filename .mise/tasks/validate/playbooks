@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#MISE description="Validate Ansible playbooks (YAML syntax and ansible-lint)"
 set -uo pipefail
 
 # Check if any playbook files have changed

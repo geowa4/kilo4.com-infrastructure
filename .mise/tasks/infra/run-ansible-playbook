@@ -1,15 +1,7 @@
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/env bash
+#MISE description="Upload and execute an Ansible playbook on EC2 instances via SSM Run Command"
 
-#####################################################################
-# run-ansible-playbook.sh
-# Uploads and executes an Ansible playbook on EC2 instances via SSM Run Command
-# Region: us-east-2
-#
-# Usage: ./run-ansible-playbook.sh <playbook-path> [instance-id]
-#   playbook-path: Local path to playbook (e.g., ansible/hardening-playbook.yml)
-#   instance-id: Optional EC2 instance ID (defaults to CloudFormation output)
-#####################################################################
+set -euo pipefail
 
 # Parse command line arguments
 PLAYBOOK_PATH="${1:-}"
@@ -57,8 +49,8 @@ check_prerequisites() {
 
     if [[ -z "$PLAYBOOK_PATH" ]]; then
         log_error "Playbook path is required"
-        log_error "Usage: $0 PLAYBOOK_PATH [INSTANCE_ID]"
-        log_error "Example: $0 ansible/hardening-playbook.yml"
+        log_error "Usage: mise run infra:run-ansible-playbook PLAYBOOK_PATH [INSTANCE_ID]"
+        log_error "Example: mise run infra:run-ansible-playbook playbooks/hardening.yml"
         exit 1
     fi
 

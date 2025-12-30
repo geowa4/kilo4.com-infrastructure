@@ -1,12 +1,10 @@
-#!/bin/bash
-# Update CloudFormation stack with current public IP
-# Usage: ./update-stack.sh
+#!/usr/bin/env bash
+#MISE description="Update CloudFormation stack with current public IP"
 
 set -euo pipefail
 
-# Get script directory and project root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# Use mise-provided project root
+PROJECT_ROOT="$MISE_PROJECT_ROOT"
 
 REGION="us-east-2"
 STACK_NAME="kilo4-Infrastructure"
@@ -20,7 +18,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 usage() {
-    echo "Usage: $0"
+    echo "Usage: mise run infra:update-stack"
     echo ""
     echo "This script will:"
     echo "  1. Fetch your current public IP address"

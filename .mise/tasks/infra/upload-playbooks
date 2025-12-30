@@ -1,18 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#MISE description="Upload Ansible playbooks from local playbooks/ directory to S3"
+
 set -euo pipefail
 
-#####################################################################
-# upload-playbooks.sh
-# Uploads Ansible playbooks from local playbooks/ directory to S3
-# Region: us-east-2
-# Idempotent: Yes - uses s3 sync
-#
-# Usage: ./upload-playbooks.sh
-#####################################################################
-
-# Get script directory and project root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# Use mise-provided project root
+PROJECT_ROOT="$MISE_PROJECT_ROOT"
 
 # Configuration Variables
 REGION="us-east-2"

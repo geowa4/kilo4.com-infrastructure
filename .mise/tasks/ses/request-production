@@ -1,6 +1,5 @@
-#!/bin/bash
-# Request Amazon SES production access
-# Usage: ./request-ses-production.sh --use-case "description" [--website-url URL] [--contact-email EMAIL]
+#!/usr/bin/env bash
+#MISE description="Request Amazon SES production access"
 
 set -euo pipefail
 
@@ -19,7 +18,7 @@ CONTACT_EMAIL="noreply@kilo4.com"
 USE_CASE=""
 
 usage() {
-    echo "Usage: $0 --use-case \"description\" [options]"
+    echo "Usage: mise run ses:request-production -- --use-case \"description\" [options]"
     echo ""
     echo "Required:"
     echo "  --use-case DESCRIPTION    Detailed description of your email use case"
@@ -29,9 +28,9 @@ usage() {
     echo "  --contact-email EMAIL     Additional contact email (default: noreply@kilo4.com)"
     echo ""
     echo "Example:"
-    echo "  $0 --use-case \"Transactional emails for user notifications and system alerts\""
+    echo "  mise run ses:request-production -- --use-case \"Transactional emails for user notifications\""
     echo ""
-    echo "  $0 --use-case \"Send password reset and account notifications\" \\"
+    echo "  mise run ses:request-production -- --use-case \"Send password reset emails\" \\"
     echo "     --website-url https://kilo4.com \\"
     echo "     --contact-email admin@kilo4.com"
     echo ""
@@ -134,7 +133,7 @@ else
     echo -e "  ${RED}✗ Domain not verified: $DOMAIN (Status: $DOMAIN_STATUS)${NC}"
     echo ""
     echo -e "${RED}ERROR: Domain must be verified before requesting production access${NC}"
-    echo "Run: ./scripts/verify-ses-domain.sh $DOMAIN"
+    echo "Run: mise run ses:verify-domain $DOMAIN"
     exit 1
 fi
 

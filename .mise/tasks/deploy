@@ -1,25 +1,14 @@
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/env bash
+#MISE description="Master deployment script for kilo4 infrastructure"
 
-#####################################################################
-# deploy.sh
-# Master deployment script for kilo4 infrastructure
-# Region: us-east-2
-# Idempotent: Yes - checks for existing resources
-#
-# Usage: ./deploy.sh [EMAIL_ADDRESS]
-#        EMAIL_ADDRESS=email@example.com ./deploy.sh
-#   EMAIL_ADDRESS: Email for patch notifications (optional, skips patch manager if not provided)
-#                  Can be set via environment variable or command line argument
-#####################################################################
+set -euo pipefail
 
 # Parse command line arguments
 # Use environment variable if set, otherwise use command line argument
 EMAIL_ADDRESS="${EMAIL_ADDRESS:-${1:-}}"
 
-# Get script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Use mise-provided project root
+PROJECT_ROOT="$MISE_PROJECT_ROOT"
 
 # Configuration Variables
 REGION="us-east-2"
@@ -56,8 +45,8 @@ handle_error() {
 trap 'handle_error $LINENO' ERR
 
 usage() {
-    echo "Usage: $0 [EMAIL_ADDRESS]"
-    echo "       EMAIL_ADDRESS=email@example.com $0"
+    echo "Usage: mise run deploy [EMAIL_ADDRESS]"
+    echo "       EMAIL_ADDRESS=email@example.com mise run deploy"
     echo ""
     echo "Deploys the complete kilo4 infrastructure:"
     echo "  1. CloudFormation stack (VPC, EC2, IAM, S3, SNS)"
@@ -72,8 +61,8 @@ usage() {
     echo "                 Can be set via environment variable or command line argument"
     echo ""
     echo "Examples:"
-    echo "  $0 admin@kilo4.com"
-    echo "  EMAIL_ADDRESS=admin@kilo4.com $0"
+    echo "  mise run deploy admin@kilo4.com"
+    echo "  EMAIL_ADDRESS=admin@kilo4.com mise run deploy"
     exit 1
 }
 
@@ -146,7 +135,7 @@ deploy_or_update_stack() {
         create_new_stack
     else
         log_info "Stack exists with status: $stack_status. Updating..."
-        "$SCRIPT_DIR/infra/update-stack.sh"
+        mise run infra:update-stack
         log_success "Stack update completed"
     fi
 }
@@ -226,25 +215,25 @@ wait_for_ssm_agent() {
 
 upload_playbooks() {
     log_info "Uploading Ansible playbooks to S3..."
-    "$SCRIPT_DIR/infra/upload-playbooks.sh"
+    mise run infra:upload-playbooks
     log_success "Playbooks uploaded"
 }
 
 run_hardening_playbook() {
     log_info "Running system hardening playbook..."
-    "$SCRIPT_DIR/infra/run-ansible-playbook.sh" "$PROJECT_ROOT/playbooks/hardening.yml"
+    mise run infra:run-ansible-playbook "$PROJECT_ROOT/playbooks/hardening.yml"
     log_success "Hardening playbook executed"
 }
 
 run_base_packages_playbook() {
     log_info "Running base packages playbook..."
-    "$SCRIPT_DIR/infra/run-ansible-playbook.sh" "$PROJECT_ROOT/playbooks/base-packages.yml"
+    mise run infra:run-ansible-playbook "$PROJECT_ROOT/playbooks/base-packages.yml"
     log_success "Base packages playbook executed"
 }
 
 create_state_manager_association() {
     log_info "Creating State Manager association for scheduled hardening..."
-    "$SCRIPT_DIR/infra/create-ansible-association.sh" hardening.yml
+    mise run infra:create-ansible-association hardening.yml
     log_success "State Manager association created"
 }
 
@@ -253,12 +242,12 @@ configure_patch_manager() {
 
     if [[ -z "$email" ]]; then
         log_warn "Email address not provided. Skipping Patch Manager configuration."
-        log_warn "Run ./scripts/configure-patch-manager.sh EMAIL later to set up patching."
+        log_warn "Run: mise run infra:configure-patch-manager EMAIL later to set up patching."
         return 0
     fi
 
     log_info "Configuring Patch Manager..."
-    "$SCRIPT_DIR/infra/configure-patch-manager.sh" "$email"
+    mise run infra:configure-patch-manager "$email"
     log_success "Patch Manager configured"
 }
 
@@ -303,7 +292,7 @@ print_deployment_summary() {
     echo "   ssh ec2-user@$public_ip"
     echo ""
     echo "2. Configure SES for email sending (optional):"
-    echo "   ./scripts/verify-ses-domain.sh kilo4.com"
+    echo "   mise run ses:verify-domain kilo4.com"
     echo "   See docs/ses-setup.md for details"
     echo ""
     echo "3. Monitor patch compliance in AWS Console:"
