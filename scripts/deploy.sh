@@ -8,11 +8,14 @@ set -euo pipefail
 # Idempotent: Yes - checks for existing resources
 #
 # Usage: ./deploy.sh [EMAIL_ADDRESS]
+#        EMAIL_ADDRESS=email@example.com ./deploy.sh
 #   EMAIL_ADDRESS: Email for patch notifications (optional, skips patch manager if not provided)
+#                  Can be set via environment variable or command line argument
 #####################################################################
 
 # Parse command line arguments
-EMAIL_ADDRESS="${1:-}"
+# Use environment variable if set, otherwise use command line argument
+EMAIL_ADDRESS="${EMAIL_ADDRESS:-${1:-}}"
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,6 +57,7 @@ trap 'handle_error $LINENO' ERR
 
 usage() {
     echo "Usage: $0 [EMAIL_ADDRESS]"
+    echo "       EMAIL_ADDRESS=email@example.com $0"
     echo ""
     echo "Deploys the complete kilo4 infrastructure:"
     echo "  1. CloudFormation stack (VPC, EC2, IAM, S3, SNS)"
@@ -65,9 +69,11 @@ usage() {
     echo ""
     echo "Arguments:"
     echo "  EMAIL_ADDRESS  Optional email for patch notifications"
+    echo "                 Can be set via environment variable or command line argument"
     echo ""
-    echo "Example:"
+    echo "Examples:"
     echo "  $0 admin@kilo4.com"
+    echo "  EMAIL_ADDRESS=admin@kilo4.com $0"
     exit 1
 }
 
@@ -140,7 +146,7 @@ deploy_or_update_stack() {
         create_new_stack
     else
         log_info "Stack exists with status: $stack_status. Updating..."
-        "$SCRIPT_DIR/update-stack.sh"
+        "$SCRIPT_DIR/infra/update-stack.sh"
         log_success "Stack update completed"
     fi
 }
@@ -220,25 +226,25 @@ wait_for_ssm_agent() {
 
 upload_playbooks() {
     log_info "Uploading Ansible playbooks to S3..."
-    "$SCRIPT_DIR/upload-playbooks.sh"
+    "$SCRIPT_DIR/infra/upload-playbooks.sh"
     log_success "Playbooks uploaded"
 }
 
 run_hardening_playbook() {
     log_info "Running system hardening playbook..."
-    "$SCRIPT_DIR/run-ansible-playbook.sh" "$PROJECT_ROOT/playbooks/hardening.yml"
+    "$SCRIPT_DIR/infra/run-ansible-playbook.sh" "$PROJECT_ROOT/playbooks/hardening.yml"
     log_success "Hardening playbook executed"
 }
 
 run_base_packages_playbook() {
     log_info "Running base packages playbook..."
-    "$SCRIPT_DIR/run-ansible-playbook.sh" "$PROJECT_ROOT/playbooks/base-packages.yml"
+    "$SCRIPT_DIR/infra/run-ansible-playbook.sh" "$PROJECT_ROOT/playbooks/base-packages.yml"
     log_success "Base packages playbook executed"
 }
 
 create_state_manager_association() {
     log_info "Creating State Manager association for scheduled hardening..."
-    "$SCRIPT_DIR/create-ansible-association.sh" hardening.yml
+    "$SCRIPT_DIR/infra/create-ansible-association.sh" hardening.yml
     log_success "State Manager association created"
 }
 
@@ -252,7 +258,7 @@ configure_patch_manager() {
     fi
 
     log_info "Configuring Patch Manager..."
-    "$SCRIPT_DIR/configure-patch-manager.sh" "$email"
+    "$SCRIPT_DIR/infra/configure-patch-manager.sh" "$email"
     log_success "Patch Manager configured"
 }
 

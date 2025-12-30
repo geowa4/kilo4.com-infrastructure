@@ -24,7 +24,7 @@ This repository contains AWS infrastructure-as-code for deploying a VPC, EC2 ins
 
 ### Update stack (recommended)
 ```bash
-./scripts/update-stack.sh
+./scripts/infra/update-stack.sh
 ```
 
 This script automatically:
@@ -79,7 +79,7 @@ Never commit tasks.
 Execute playbooks on the EC2 instance via SSM using the consolidated script:
 
 ```bash
-./scripts/run-ansible-playbook.sh playbooks/hardening.yml
+./scripts/infra/run-ansible-playbook.sh playbooks/hardening.yml
 ```
 
 The script automatically:
@@ -155,20 +155,20 @@ aws ssm create-association \
 ### SES Scripts
 ```bash
 # Verify email identity
-./scripts/verify-ses-identity.sh noreply@kilo4.com
+./scripts/ses/verify-identity.sh noreply@kilo4.com
 
 # Verify domain with DKIM
-./scripts/verify-ses-domain.sh kilo4.com
+./scripts/ses/verify-domain.sh kilo4.com
 
 # Send test email
-python3 scripts/test-ses-email.py \
+python3 scripts/ses/test-email.py \
   --from noreply@kilo4.com \
   --to recipient@example.com \
   --subject "Test" \
   --body "Test email"
 
 # Request production access
-./scripts/request-ses-production.sh \
+./scripts/ses/request-production.sh \
   --use-case "Transactional emails for user notifications"
 ```
 

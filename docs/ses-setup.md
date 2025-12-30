@@ -53,10 +53,10 @@ Use the provided script to verify sender and recipient email addresses:
 
 ```bash
 # Verify sender email
-./scripts/verify-ses-identity.sh noreply@kilo4.com
+./scripts/ses/verify-identity.sh noreply@kilo4.com
 
 # Verify additional recipient emails (for sandbox testing)
-./scripts/verify-ses-identity.sh noreply@kilo4.com test@example.com
+./scripts/ses/verify-identity.sh noreply@kilo4.com test@example.com
 ```
 
 What happens:
@@ -70,7 +70,7 @@ What happens:
 Domain verification is recommended for better deliverability and required before requesting production access:
 
 ```bash
-./scripts/verify-ses-domain.sh kilo4.com
+./scripts/ses/verify-domain.sh kilo4.com
 ```
 
 The script will output DNS records you need to add:
@@ -123,7 +123,7 @@ DKIM (DomainKeys Identified Mail) provides:
 The Python script uses boto3 to send via the SES API:
 
 ```bash
-python3 scripts/test-ses-email.py \
+python3 scripts/ses/test-email.py \
     --from noreply@kilo4.com \
     --to recipient@example.com \
     --subject "Test Email" \
@@ -228,7 +228,7 @@ Before sending test emails:
 
 ```bash
 # 1. Verify identities are confirmed
-./scripts/verify-ses-identity.sh noreply@kilo4.com
+./scripts/ses/verify-identity.sh noreply@kilo4.com
 
 # 2. Check sending quota
 aws ses get-send-quota --region us-east-2
@@ -241,14 +241,14 @@ aws ses get-account-sending-enabled --region us-east-2
 
 ```bash
 # Simple text email
-python3 scripts/test-ses-email.py \
+python3 scripts/ses/test-email.py \
     --from noreply@kilo4.com \
     --to your-email@example.com \
     --subject "SES Test Email" \
     --body "This is a test email to verify SES is working correctly."
 
 # HTML email
-python3 scripts/test-ses-email.py \
+python3 scripts/ses/test-email.py \
     --from noreply@kilo4.com \
     --to your-email@example.com \
     --subject "SES HTML Test" \
@@ -264,7 +264,7 @@ python3 scripts/test-ses-email.py \
 ```
 **Solution**: Verify the email address:
 ```bash
-./scripts/verify-ses-identity.sh noreply@kilo4.com recipient@example.com
+./scripts/ses/verify-identity.sh noreply@kilo4.com recipient@example.com
 ```
 
 #### Error: Daily sending quota exceeded
@@ -343,7 +343,7 @@ The test script (`test-ses-email.py`) is deployed to EC2 via Ansible. It uses th
 ssh ec2-user@<instance-ip>
 
 # Send test email (uses instance IAM role)
-python3 /opt/kilo4/scripts/test-ses-email.py \
+python3 /opt/kilo4/scripts/ses/test-email.py \
     --from noreply@kilo4.com \
     --to recipient@example.com \
     --subject "Test from EC2" \
@@ -361,13 +361,13 @@ python3 /opt/kilo4/scripts/test-ses-email.py \
 
 ```bash
 # Verify email address
-./scripts/verify-ses-identity.sh noreply@kilo4.com
+./scripts/ses/verify-identity.sh noreply@kilo4.com
 
 # Verify domain with DKIM
-./scripts/verify-ses-domain.sh kilo4.com
+./scripts/ses/verify-domain.sh kilo4.com
 
 # Send test email
-python3 scripts/test-ses-email.py \
+python3 scripts/ses/test-email.py \
     --from noreply@kilo4.com \
     --to recipient@example.com \
     --subject "Test" \

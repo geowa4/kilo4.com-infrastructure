@@ -276,7 +276,7 @@ go version
 If your IP address changes:
 
 ```bash
-./scripts/update-stack.sh
+./scripts/infra/update-stack.sh
 ```
 
 This automatically:
@@ -290,10 +290,10 @@ To manually apply playbooks:
 
 ```bash
 # System hardening
-./scripts/run-ansible-playbook.sh playbooks/hardening.yml
+./scripts/infra/run-ansible-playbook.sh playbooks/hardening.yml
 
 # Base packages
-./scripts/run-ansible-playbook.sh playbooks/base-packages.yml
+./scripts/infra/run-ansible-playbook.sh playbooks/base-packages.yml
 ```
 
 ### Update Stack with Changes
@@ -301,7 +301,7 @@ To manually apply playbooks:
 After modifying `infrastructure.yaml`:
 
 ```bash
-./scripts/update-stack.sh
+./scripts/infra/update-stack.sh
 ```
 
 ### Re-deploy Everything
@@ -360,7 +360,7 @@ This will:
 
 **Solution**: Stack already exists. Use update instead:
 ```bash
-./scripts/update-stack.sh
+./scripts/infra/update-stack.sh
 ```
 
 ---
@@ -446,7 +446,7 @@ aws ssm get-command-invocation \
 
 **Solution**:
 ```bash
-./scripts/configure-patch-manager.sh your-email@example.com
+./scripts/infra/configure-patch-manager.sh your-email@example.com
 ```
 
 ### Cannot SSH to Instance
@@ -465,7 +465,7 @@ aws ec2 describe-security-groups \
 
 2. **Update security group with current IP**:
 ```bash
-./scripts/update-stack.sh
+./scripts/infra/update-stack.sh
 ```
 
 3. **Check instance has public IP**:
@@ -487,7 +487,7 @@ SES configuration is separate from infrastructure deployment.
 
 **Verify domain**:
 ```bash
-./scripts/verify-ses-domain.sh kilo4.com
+./scripts/ses/verify-domain.sh kilo4.com
 ```
 
 **Complete guide**: See [docs/ses-setup.md](ses-setup.md) for comprehensive SES setup instructions.
@@ -498,25 +498,25 @@ All deployment scripts can be run independently:
 
 ```bash
 # Update CloudFormation stack
-./scripts/update-stack.sh
+./scripts/infra/update-stack.sh
 
 # Upload playbooks to S3
-./scripts/upload-playbooks.sh
+./scripts/infra/upload-playbooks.sh
 
 # Run specific playbook
-./scripts/run-ansible-playbook.sh playbooks/hardening.yml
+./scripts/infra/run-ansible-playbook.sh playbooks/hardening.yml
 
 # Create State Manager association
-./scripts/create-ansible-association.sh hardening.yml
+./scripts/infra/create-ansible-association.sh hardening.yml
 
 # Configure Patch Manager
-./scripts/configure-patch-manager.sh admin@example.com
+./scripts/infra/configure-patch-manager.sh admin@example.com
 
 # Verify SES domain
-./scripts/verify-ses-domain.sh kilo4.com
+./scripts/ses/verify-domain.sh kilo4.com
 
 # Test SES email
-python3 scripts/test-ses-email.py \
+python3 scripts/ses/test-email.py \
   --from noreply@kilo4.com \
   --to test@example.com \
   --subject "Test" \
@@ -595,10 +595,10 @@ The stack provides these outputs for scripting:
 ./scripts/deploy.sh admin@example.com
 
 # Update SSH IP
-./scripts/update-stack.sh
+./scripts/infra/update-stack.sh
 
 # Run playbook
-./scripts/run-ansible-playbook.sh playbooks/hardening.yml
+./scripts/infra/run-ansible-playbook.sh playbooks/hardening.yml
 
 # Check stack status
 aws cloudformation describe-stacks \

@@ -29,7 +29,7 @@ aws ses get-identity-verification-attributes \
 
 **If not verified**:
 ```bash
-./scripts/verify-ses-domain.sh kilo4.com
+./scripts/ses/verify-domain.sh kilo4.com
 ```
 
 ### 2. DKIM Configuration
@@ -55,7 +55,7 @@ aws ses get-identity-dkim-attributes \
 
 **If not enabled**:
 ```bash
-./scripts/verify-ses-domain.sh kilo4.com
+./scripts/ses/verify-domain.sh kilo4.com
 ```
 
 ### 3. SPF Record Configuration
@@ -249,7 +249,7 @@ Once all prerequisites are complete:
 Run the production access request script:
 
 ```bash
-./scripts/request-ses-production.sh \
+./scripts/ses/request-production.sh \
     --use-case "Transactional emails for kilo4.com user notifications and system alerts"
 ```
 
@@ -287,7 +287,7 @@ Expected output shows higher limits:
 
 ```bash
 # Send to any email address (no longer restricted to verified addresses)
-python3 scripts/test-ses-email.py \
+python3 scripts/ses/test-email.py \
     --from noreply@kilo4.com \
     --to any-recipient@example.com \
     --subject "Production Test" \
