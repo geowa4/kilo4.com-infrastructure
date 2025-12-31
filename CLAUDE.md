@@ -10,9 +10,10 @@ This repository contains AWS infrastructure-as-code for deploying a VPC, EC2 ins
 
 **Infrastructure Model**: Single CloudFormation template (`infrastructure.yaml`) that defines:
 - VPC with public subnet and internet gateway
-- EC2 instance (t4g.small ARM-based) with IAM role for SSM and SES
+- EC2 instance (t4g.small ARM-based) with IAM role for SSM, SES, and S3 backup access
 - Security group restricting SSH to a single parameterized IP
 - SSH key provisioning from GitHub (https://github.com/geowa4.keys) via UserData
+- S3 buckets for Ansible playbooks and backups (versioned, KMS-encrypted)
 - SNS topics for SES bounce/complaint notifications
 - CloudWatch alarms for SES reputation monitoring
 
@@ -51,7 +52,7 @@ aws cloudformation wait stack-update-complete --stack-name ${PROJECT_NAME}-Infra
 - **Instance Type**: t4g.small (ARM-based Graviton)
 - **AMI**: Dynamically resolved via SSM parameter `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`
 - **SSH Access**: GitHub user `geowa4`'s public keys are automatically provisioned
-- **IAM Role**: Includes `AmazonSSMManagedInstanceCore` and SES sending permissions
+- **IAM Role**: Includes `AmazonSSMManagedInstanceCore`, SES sending permissions, and S3 backup bucket access
 
 ### Get instance public IP
 ```bash
@@ -67,7 +68,7 @@ aws ec2 describe-instances \
 All operational tasks are managed via mise. Tasks are defined in `.mise/tasks/` with the following namespaces:
 
 - `deploy` / `teardown` - Full deployment/teardown
-- `infra:*` - Infrastructure operations (CloudFormation, Ansible, Patch Manager)
+- `infra:*` - Infrastructure operations (CloudFormation, Ansible, Patch Manager, Backups)
 - `ses:*` - Amazon SES email configuration
 - `validate:*` - Code/config validation
 
@@ -134,6 +135,7 @@ uv run ansible-lint playbooks/<name>.yml
 
 - `playbooks/hardening.yml` - System hardening (SSH, firewall, fail2ban)
 - `playbooks/base-packages.yml` - Development tools (git, golang)
+- `playbooks/s3-backup.yml` - S3 backup system deployment
 
 ## Systems Manager Integration
 
@@ -203,6 +205,105 @@ Manual configuration required (no CloudFormation support):
 ### Documentation
 - `docs/ses-setup.md` - Complete SES setup guide
 - `docs/ses-production-checklist.md` - Production access prerequisites and checklist
+
+## S3 Backup System
+
+### Overview
+Automated backup solution for critical files on the EC2 instance to a versioned S3 bucket with lifecycle management.
+
+- **Schedule**: Daily backups at 02:00 (with 5-minute random delay)
+- **Storage**: Versioned S3 bucket with KMS encryption
+- **Lifecycle**: STANDARD (30 days) → GLACIER (60 days) → Deleted (90 days for non-current versions)
+- **Multi-file support**: Configurable file list
+
+### Infrastructure
+CloudFormation manages:
+- S3 backup bucket with versioning and KMS encryption
+- IAM permissions for EC2 instance to access backup bucket
+- Lifecycle policies for cost optimization
+
+**Bucket outputs**:
+- `BackupBucketName`: S3 bucket name for backups
+- `BackupBucketArn`: S3 bucket ARN for backups
+
+### Deployment
+
+Deploy the backup system using the Ansible playbook:
+
+```bash
+# Get the backup bucket name from CloudFormation outputs
+BACKUP_BUCKET=$(mise run infra:stack-outputs | jq -r '.BackupBucketName')
+
+# Deploy backup system (pass bucket as extra variable)
+mise run infra:run-ansible-playbook playbooks/s3-backup.yml "" "backup_bucket=$BACKUP_BUCKET"
+```
+
+The playbook automatically:
+- Installs prerequisites (AWS CLI v2, jq)
+- Deploys backup scripts to `/usr/local/bin/`
+- Creates configuration files in `/etc/s3-backup/`
+- Installs and enables systemd timer for daily backups
+
+### Backup Tasks
+
+```bash
+# Trigger immediate backup
+mise run infra:backup-run
+
+# List all versions of a file
+mise run infra:backup-list-versions fail2ban.sqlite3
+
+# Download a specific version to EC2 instance
+mise run infra:backup-download fail2ban.sqlite3 <version-id> [/path/to/dest]
+
+# Restore a version as current in S3
+mise run infra:backup-restore fail2ban.sqlite3 <version-id>
+```
+
+### Configuration
+
+**Backup configuration**: `/etc/s3-backup/backup.conf`
+```bash
+S3_BUCKET="<bucket-name>"
+S3_PREFIX="backups"
+AWS_REGION="us-east-2"
+FILES_CONF="/etc/s3-backup/files.conf"
+```
+
+**File list**: `/etc/s3-backup/files.conf`
+```bash
+# One file path per line
+/var/lib/fail2ban/fail2ban.sqlite3
+```
+
+### Adding New Files to Backup
+
+1. SSH to the instance or use SSM Session Manager
+2. Edit `/etc/s3-backup/files.conf` and add the file path
+3. Trigger immediate backup to test: `sudo systemctl start s3-backup.service`
+4. Check logs: `sudo journalctl -u s3-backup.service -n 50`
+
+Alternatively, update the `backup_files` variable in `playbooks/s3-backup.yml` and re-run the playbook.
+
+### Monitoring
+
+Check backup timer status:
+```bash
+# Via SSM
+aws ssm send-command \
+  --document-name "AWS-RunShellScript" \
+  --instance-ids <instance-id> \
+  --parameters "commands=['systemctl status s3-backup.timer']" \
+  --region us-east-2
+
+# Via SSH
+ssh ec2-user@<instance-ip> 'sudo systemctl status s3-backup.timer'
+```
+
+Check recent backup logs:
+```bash
+ssh ec2-user@<instance-ip> 'sudo journalctl -u s3-backup.service -n 100'
+```
 
 ## Important Constraints
 

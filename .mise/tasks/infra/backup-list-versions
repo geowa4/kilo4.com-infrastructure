@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+#MISE description="List all backup versions for a file"
+
+set -euo pipefail
+
+# Parse command line arguments
+FILENAME="${1:-}"
+
+# Configuration Variables
+REGION="us-east-2"
+STACK_NAME="${PROJECT_NAME}-Infrastructure"
+
+#####################################################################
+# Helper Functions
+#####################################################################
+
+log_info() {
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_success() {
+    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+handle_error() {
+    log_error "Script failed at line $1"
+    exit 1
+}
+
+trap 'handle_error $LINENO' ERR
+
+#####################################################################
+# Prerequisites Check
+#####################################################################
+
+check_prerequisites() {
+    log_info "Checking prerequisites..."
+
+    if [[ -z $FILENAME ]]; then
+        log_error "Filename is required"
+        log_error "Usage: mise run infra:backup-list-versions <filename>"
+        log_error "Example: mise run infra:backup-list-versions fail2ban.sqlite3"
+        exit 1
+    fi
+
+    if ! command -v aws &>/dev/null; then
+        log_error "AWS CLI is not installed"
+        exit 1
+    fi
+
+    if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
+        log_error "AWS credentials not configured or expired"
+        exit 1
+    fi
+
+    log_success "Prerequisites validated"
+}
+
+#####################################################################
+# Get Backup Bucket Name and Instance ID
+#####################################################################
+
+get_bucket_name() {
+    log_info "Getting backup bucket name from CloudFormation stack: $STACK_NAME"
+
+    local bucket_name
+    bucket_name=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='BackupBucketName'].OutputValue" \
+        --output text 2>/dev/null)
+
+    if [[ -z $bucket_name || $bucket_name == "None" ]]; then
+        log_error "Could not retrieve backup bucket name from stack outputs"
+        exit 1
+    fi
+
+    echo "$bucket_name"
+}
+
+get_instance_id() {
+    log_info "Getting instance ID from CloudFormation stack: $STACK_NAME"
+
+    local instance_id
+    instance_id=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+        --output text 2>/dev/null)
+
+    if [[ -z $instance_id || $instance_id == "None" ]]; then
+        log_error "Could not retrieve instance ID from stack outputs"
+        exit 1
+    fi
+
+    echo "$instance_id"
+}
+
+#####################################################################
+# Execute Command via SSM
+#####################################################################
+
+execute_command() {
+    local bucket_name="$1"
+    local instance_id="$2"
+
+    log_info "Listing versions for: $FILENAME"
+
+    # Execute command via SSM
+    local command_id
+    command_id=$(aws ssm send-command \
+        --document-name "AWS-RunShellScript" \
+        --instance-ids "$instance_id" \
+        --parameters "commands=['/usr/local/bin/s3-backup-versions.sh \"$FILENAME\" list-table']" \
+        --region "$REGION" \
+        --query 'Command.CommandId' \
+        --output text)
+
+    log_success "Command sent with ID: $command_id"
+
+    # Wait for completion
+    log_info "Waiting for command to complete..."
+    aws ssm wait command-executed \
+        --command-id "$command_id" \
+        --instance-id "$instance_id" \
+        --region "$REGION" 2>/dev/null || true
+
+    # Get output
+    local output
+    output=$(aws ssm get-command-invocation \
+        --command-id "$command_id" \
+        --instance-id "$instance_id" \
+        --region "$REGION" \
+        --query 'StandardOutputContent' \
+        --output text)
+
+    echo ""
+    echo "$output"
+    echo ""
+
+    # Check status
+    local status
+    status=$(aws ssm get-command-invocation \
+        --command-id "$command_id" \
+        --instance-id "$instance_id" \
+        --region "$REGION" \
+        --query 'Status' \
+        --output text)
+
+    if [[ $status != "Success" ]]; then
+        log_error "Command failed with status: $status"
+        exit 1
+    fi
+
+    log_success "Versions listed successfully"
+}
+
+#####################################################################
+# Main Function
+#####################################################################
+
+main() {
+    echo "" >&2
+    log_info "Listing backup versions via SSM"
+    echo "" >&2
+
+    check_prerequisites
+
+    local bucket_name
+    bucket_name=$(get_bucket_name)
+
+    local instance_id
+    instance_id=$(get_instance_id)
+
+    execute_command "$bucket_name" "$instance_id"
+    echo "" >&2
+}
+
+main "$@"

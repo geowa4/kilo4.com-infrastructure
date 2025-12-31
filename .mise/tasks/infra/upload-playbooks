@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Upload Ansible playbooks from local playbooks/ directory to S3"
+#MISE description="Upload Ansible playbooks to S3"
 
 set -euo pipefail
 
@@ -153,7 +153,7 @@ main() {
     verify_upload "$bucket_name"
 
     echo ""
-    log_success "Playbook upload complete!"
+    log_success "Upload complete!"
     echo ""
 }
 

@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#MISE description="Export CloudFormation stack outputs as JSON"
+
+set -euo pipefail
+
+# Configuration Variables
+REGION="us-east-2"
+STACK_NAME="${PROJECT_NAME}-Infrastructure"
+
+#####################################################################
+# Helper Functions
+#####################################################################
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+handle_error() {
+    log_error "Script failed at line $1"
+    exit 1
+}
+
+trap 'handle_error $LINENO' ERR
+
+#####################################################################
+# Get Stack Outputs
+#####################################################################
+
+get_stack_outputs() {
+    if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
+        log_error "AWS credentials not configured or expired"
+        exit 1
+    fi
+
+    aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION" \
+        --query 'Stacks[0].Outputs' \
+        --output json | jq -r 'reduce .[] as $item ({}; .[$item.OutputKey] = $item.OutputValue)'
+}
+
+#####################################################################
+# Main Function
+#####################################################################
+
+main() {
+    get_stack_outputs
+}
+
+main "$@"

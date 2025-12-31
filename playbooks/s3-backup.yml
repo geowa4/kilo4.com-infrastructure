@@ -1,0 +1,715 @@
+---
+- name: Deploy S3 backup solution
+  hosts: localhost
+  become: true
+
+  vars:
+    config_dir: /etc/s3-backup
+    scripts_dir: /usr/local/bin
+    systemd_dir: /etc/systemd/system
+    backup_bucket: "{{ backup_bucket | default('') }}"
+    backup_files:
+      - /var/lib/fail2ban/fail2ban.sqlite3
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart s3-backup timer
+      ansible.builtin.systemd:
+        name: s3-backup.timer
+        state: restarted
+
+  tasks:
+    # Validate prerequisites
+    - name: Check if backup bucket is specified
+      ansible.builtin.fail:
+        msg: |
+          backup_bucket variable must be passed to this playbook as an Ansible extra variable.
+      when: backup_bucket == ''
+
+    # Install prerequisites
+    - name: Install jq for JSON parsing
+      ansible.builtin.dnf:
+        name: jq
+        state: present
+
+    - name: Check if AWS CLI v2 is installed
+      ansible.builtin.command: aws --version
+      register: aws_version_check
+      failed_when: false
+      changed_when: false
+
+    - name: Install AWS CLI v2
+      when: aws_version_check.rc != 0 or 'aws-cli/2' not in aws_version_check.stdout
+      block:
+        - name: Download AWS CLI v2 installer
+          ansible.builtin.get_url:
+            url: https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip
+            dest: /tmp/awscliv2.zip
+            mode: '0644'
+
+        - name: Install unzip
+          ansible.builtin.dnf:
+            name: unzip
+            state: present
+
+        - name: Extract AWS CLI v2
+          ansible.builtin.unarchive:
+            src: /tmp/awscliv2.zip
+            dest: /tmp
+            remote_src: true
+
+        - name: Install AWS CLI v2
+          ansible.builtin.command: /tmp/aws/install --update
+          args:
+            creates: /usr/local/bin/aws
+
+        - name: Clean up AWS CLI installer
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/awscliv2.zip
+            - /tmp/aws
+
+    # Create configuration directory
+    - name: Create S3 backup configuration directory
+      ansible.builtin.file:
+        path: "{{ config_dir }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    # Deploy scripts (embedded inline)
+    - name: Deploy s3-backup.sh script
+      ansible.builtin.copy:
+        content: |
+          {% raw %}#!/bin/bash
+          #
+          # s3-backup.sh - Copy files to a versioned S3 bucket
+          #
+          # This script is executed by the s3-backup.service systemd unit.
+          # Configuration is read from /etc/s3-backup/backup.conf
+          # File list is read from /etc/s3-backup/files.conf
+          #
+
+          set -euo pipefail
+
+          # Configuration (can be overridden by environment file)
+          S3_BUCKET="${S3_BUCKET:-}"
+          S3_PREFIX="${S3_PREFIX:-backups}"
+          AWS_REGION="${AWS_REGION:-us-east-2}"
+          FILES_CONF="${FILES_CONF:-/etc/s3-backup/files.conf}"
+
+          # Logging functions
+          log_info() {
+              echo "[$(date -Iseconds)] INFO: $*"
+          }
+
+          log_error() {
+              echo "[$(date -Iseconds)] ERROR: $*" >&2
+          }
+
+          log_warn() {
+              echo "[$(date -Iseconds)] WARN: $*" >&2
+          }
+
+          # Validate configuration
+          validate_config() {
+              local errors=0
+
+              if [[ -z "${S3_BUCKET}" ]]; then
+                  log_error "S3_BUCKET is not set"
+                  ((errors++))
+              fi
+
+              if [[ ! -f "${FILES_CONF}" ]]; then
+                  log_error "FILES_CONF file does not exist: ${FILES_CONF}"
+                  ((errors++))
+              fi
+
+              if [[ ${errors} -gt 0 ]]; then
+                  log_error "Configuration validation failed with ${errors} error(s)"
+                  exit 1
+              fi
+
+              log_info "Configuration validated successfully"
+          }
+
+          # Check AWS credentials/instance profile
+          check_aws_access() {
+              log_info "Checking AWS access..."
+
+              if ! aws sts get-caller-identity --region "${AWS_REGION}" &>/dev/null; then
+                  log_error "Failed to authenticate with AWS. Check instance profile or credentials."
+                  exit 1
+              fi
+
+              log_info "AWS authentication successful"
+          }
+
+          # Verify S3 bucket exists and is accessible
+          check_bucket_access() {
+              log_info "Checking S3 bucket access: ${S3_BUCKET}"
+
+              if ! aws s3api head-bucket --bucket "${S3_BUCKET}" --region "${AWS_REGION}" 2>/dev/null; then
+                  log_error "Cannot access S3 bucket: ${S3_BUCKET}"
+                  exit 1
+              fi
+
+              log_info "S3 bucket is accessible"
+          }
+
+          # Read and validate files list
+          read_files_list() {
+              local -a files=()
+
+              while IFS= read -r line; do
+                  # Skip empty lines and comments
+                  [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]] && continue
+
+                  # Trim whitespace
+                  line=$(echo "${line}" | xargs)
+
+                  if [[ -f "${line}" ]]; then
+                      files+=("${line}")
+                  else
+                      log_warn "File does not exist, skipping: ${line}"
+                  fi
+              done < "${FILES_CONF}"
+
+              if [[ ${#files[@]} -eq 0 ]]; then
+                  log_error "No valid files found in ${FILES_CONF}"
+                  exit 1
+              fi
+
+              echo "${files[@]}"
+          }
+
+          # Perform backup for a single file
+          backup_file() {
+              local backup_source="$1"
+              local filename
+              local s3_key
+              local file_size
+
+              filename=$(basename "${backup_source}")
+              s3_key="${S3_PREFIX}/${filename}"
+              file_size=$(stat -c%s "${backup_source}" 2>/dev/null || stat -f%z "${backup_source}")
+
+              log_info "Starting backup:"
+              log_info "  Source: ${backup_source}"
+              log_info "  Size: ${file_size} bytes"
+              log_info "  Destination: s3://${S3_BUCKET}/${s3_key}"
+
+              # Copy file to S3 with server-side encryption
+              if aws s3 cp "${backup_source}" "s3://${S3_BUCKET}/${s3_key}" \
+                  --region "${AWS_REGION}" \
+                  --sse aws:kms \
+                  --sse-kms-key-id alias/aws/s3; then
+
+                  log_info "Backup completed successfully"
+
+                  # Get the version ID of the uploaded file
+                  local version_id
+                  version_id=$(aws s3api head-object \
+                      --bucket "${S3_BUCKET}" \
+                      --key "${s3_key}" \
+                      --region "${AWS_REGION}" \
+                      --query 'VersionId' \
+                      --output text)
+
+                  log_info "Version ID: ${version_id}"
+                  return 0
+              else
+                  log_error "Backup failed for ${backup_source}"
+                  return 1
+              fi
+          }
+
+          # Perform backups for all files
+          perform_backups() {
+              local files
+              local failures=0
+              local successes=0
+
+              read -ra files <<< "$(read_files_list)"
+
+              log_info "Found ${#files[@]} file(s) to back up"
+
+              for file in "${files[@]}"; do
+                  log_info "=========================================="
+                  if backup_file "${file}"; then
+                      ((successes++))
+                  else
+                      ((failures++))
+                  fi
+              done
+
+              log_info "=========================================="
+              log_info "Backup summary: ${successes} succeeded, ${failures} failed"
+
+              if [[ ${failures} -gt 0 ]]; then
+                  return 1
+              fi
+
+              return 0
+          }
+
+          # Main execution
+          main() {
+              log_info "=========================================="
+              log_info "S3 Backup started"
+              log_info "=========================================="
+
+              validate_config
+              check_aws_access
+              check_bucket_access
+
+              if perform_backups; then
+                  log_info "=========================================="
+                  log_info "S3 Backup completed successfully"
+                  log_info "=========================================="
+                  exit 0
+              else
+                  log_error "=========================================="
+                  log_error "S3 Backup completed with errors"
+                  log_error "=========================================="
+                  exit 1
+              fi
+          }
+
+          main "$@"{% endraw %}
+        dest: "{{ scripts_dir }}/s3-backup.sh"
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Deploy s3-backup-versions.sh script
+      ansible.builtin.copy:
+        content: |
+          {% raw %}#!/bin/bash
+          #
+          # s3-backup-versions.sh - List and download backup versions from S3
+          #
+          # Usage:
+          #   s3-backup-versions.sh <filename> list                    # List all versions
+          #   s3-backup-versions.sh <filename> list-table              # List versions in table format
+          #   s3-backup-versions.sh <filename> download-latest [dest]  # Download latest version
+          #   s3-backup-versions.sh <filename> download <version-id> [dest]  # Download specific version
+          #   s3-backup-versions.sh <filename> restore <version-id>    # Restore a specific version as current
+          #
+
+          set -euo pipefail
+
+          # Load configuration
+          if [[ -f /etc/s3-backup/backup.conf ]]; then
+              source /etc/s3-backup/backup.conf
+          fi
+
+          # Allow overrides from environment
+          S3_BUCKET="${S3_BUCKET:-}"
+          S3_PREFIX="${S3_PREFIX:-backups}"
+          AWS_REGION="${AWS_REGION:-us-east-2}"
+
+          # Derive the S3 key from filename
+          get_s3_key() {
+              local filename="$1"
+              echo "${S3_PREFIX}/${filename}"
+          }
+
+          # Validate bucket is set
+          validate_bucket() {
+              if [[ -z "${S3_BUCKET}" ]]; then
+                  echo "ERROR: S3_BUCKET not set in configuration" >&2
+                  exit 1
+              fi
+          }
+
+          # List all versions of the backup file
+          list_versions() {
+              local filename="$1"
+              validate_bucket
+              local s3_key
+              s3_key=$(get_s3_key "${filename}")
+
+              echo "Listing all versions of: s3://${S3_BUCKET}/${s3_key}"
+              echo "============================================================"
+              echo ""
+
+              aws s3api list-object-versions \
+                  --bucket "${S3_BUCKET}" \
+                  --prefix "${s3_key}" \
+                  --region "${AWS_REGION}" \
+                  --query 'Versions[*].{VersionId:VersionId,LastModified:LastModified,Size:Size,IsLatest:IsLatest,StorageClass:StorageClass}' \
+                  --output json | jq -r '
+                      .[] |
+                      "Version: \(.VersionId)\n  Last Modified: \(.LastModified)\n  Size: \(.Size) bytes\n  Is Latest: \(.IsLatest)\n  Storage Class: \(.StorageClass // \"STANDARD\")\n"
+                  '
+          }
+
+          # List versions in a compact table format
+          list_versions_table() {
+              local filename="$1"
+              validate_bucket
+              local s3_key
+              s3_key=$(get_s3_key "${filename}")
+
+              echo "Versions of: s3://${S3_BUCKET}/${s3_key}"
+              echo ""
+              printf "%-36s  %-24s  %12s  %-8s  %-12s\n" "VERSION ID" "LAST MODIFIED" "SIZE" "LATEST" "STORAGE"
+              printf "%-36s  %-24s  %12s  %-8s  %-12s\n" "------------------------------------" "------------------------" "------------" "--------" "------------"
+
+              aws s3api list-object-versions \
+                  --bucket "${S3_BUCKET}" \
+                  --prefix "${s3_key}" \
+                  --region "${AWS_REGION}" \
+                  --query 'Versions[*].{VersionId:VersionId,LastModified:LastModified,Size:Size,IsLatest:IsLatest,StorageClass:StorageClass}' \
+                  --output json | jq -r '
+                      .[] |
+                      [.VersionId, .LastModified[0:19], (.Size | tostring), (if .IsLatest then "Yes" else "No" end), (.StorageClass // "STANDARD")] |
+                      @tsv
+                  ' | while IFS=$'\t' read -r vid modified size latest storage; do
+                      printf "%-36s  %-24s  %12s  %-8s  %-12s\n" "$vid" "$modified" "$size" "$latest" "$storage"
+                  done
+          }
+
+          # Get the latest version ID
+          get_latest_version_id() {
+              local filename="$1"
+              validate_bucket
+              local s3_key
+              s3_key=$(get_s3_key "${filename}")
+
+              aws s3api list-object-versions \
+                  --bucket "${S3_BUCKET}" \
+                  --prefix "${s3_key}" \
+                  --region "${AWS_REGION}" \
+                  --query 'Versions[?IsLatest==`true`].VersionId' \
+                  --output text
+          }
+
+          # Download the latest version
+          download_latest() {
+              local filename="$1"
+              local destination="${2:-${filename}}"
+              validate_bucket
+              local s3_key
+
+              s3_key=$(get_s3_key "${filename}")
+
+              echo "Downloading latest version of: s3://${S3_BUCKET}/${s3_key}"
+              echo "Destination: ${destination}"
+              echo ""
+
+              # Get the latest version ID for display
+              local version_id
+              version_id=$(get_latest_version_id "${filename}")
+              echo "Latest Version ID: ${version_id}"
+              echo ""
+
+              # Download (no version-id needed for latest)
+              if aws s3 cp "s3://${S3_BUCKET}/${s3_key}" "${destination}" \
+                  --region "${AWS_REGION}"; then
+                  echo ""
+                  echo "Download completed successfully"
+                  echo "File saved to: ${destination}"
+                  ls -la "${destination}"
+              else
+                  echo "ERROR: Download failed" >&2
+                  exit 1
+              fi
+          }
+
+          # Download a specific version
+          download_version() {
+              local filename="$1"
+              local version_id="$2"
+              local destination="${3:-${filename}.${version_id:0:8}}"
+              validate_bucket
+              local s3_key
+
+              if [[ -z "${version_id}" ]]; then
+                  echo "ERROR: Version ID is required" >&2
+                  echo "Usage: $0 <filename> download <version-id> [destination]" >&2
+                  exit 1
+              fi
+
+              s3_key=$(get_s3_key "${filename}")
+
+              echo "Downloading version ${version_id}"
+              echo "Source: s3://${S3_BUCKET}/${s3_key}"
+              echo "Destination: ${destination}"
+              echo ""
+
+              # Check storage class first
+              local storage_class
+              storage_class=$(aws s3api head-object \
+                  --bucket "${S3_BUCKET}" \
+                  --key "${s3_key}" \
+                  --version-id "${version_id}" \
+                  --region "${AWS_REGION}" \
+                  --query 'StorageClass' \
+                  --output text 2>/dev/null || echo "STANDARD")
+
+              if [[ "${storage_class}" == "GLACIER" || "${storage_class}" == "DEEP_ARCHIVE" ]]; then
+                  echo "WARNING: This version is in ${storage_class} storage class."
+                  echo "You need to initiate a restore request first."
+                  echo ""
+                  echo "To restore, run:"
+                  echo "  aws s3api restore-object --bucket ${S3_BUCKET} --key ${s3_key} --version-id ${version_id} --restore-request Days=7"
+                  echo ""
+                  echo "Then wait for the restore to complete (check with head-object)."
+                  exit 1
+              fi
+
+              # Download specific version
+              if aws s3api get-object \
+                  --bucket "${S3_BUCKET}" \
+                  --key "${s3_key}" \
+                  --version-id "${version_id}" \
+                  --region "${AWS_REGION}" \
+                  "${destination}"; then
+                  echo ""
+                  echo "Download completed successfully"
+                  echo "File saved to: ${destination}"
+                  ls -la "${destination}"
+              else
+                  echo "ERROR: Download failed" >&2
+                  exit 1
+              fi
+          }
+
+          # Restore a specific version (copy it as the new current version)
+          restore_version() {
+              local filename="$1"
+              local version_id="$2"
+              validate_bucket
+              local s3_key
+
+              if [[ -z "${version_id}" ]]; then
+                  echo "ERROR: Version ID is required" >&2
+                  echo "Usage: $0 <filename> restore <version-id>" >&2
+                  exit 1
+              fi
+
+              s3_key=$(get_s3_key "${filename}")
+
+              echo "Restoring version ${version_id} as current version"
+              echo "Object: s3://${S3_BUCKET}/${s3_key}"
+              echo ""
+
+              # Copy the specific version to itself (creates a new current version)
+              if aws s3api copy-object \
+                  --bucket "${S3_BUCKET}" \
+                  --key "${s3_key}" \
+                  --copy-source "${S3_BUCKET}/${s3_key}?versionId=${version_id}" \
+                  --region "${AWS_REGION}" \
+                  --server-side-encryption aws:kms \
+                  --ssekms-key-id alias/aws/s3; then
+                  echo "Restore completed successfully"
+                  echo "Version ${version_id} is now the current version"
+              else
+                  echo "ERROR: Restore failed" >&2
+                  exit 1
+              fi
+          }
+
+          # Show usage
+          usage() {
+              cat <<EOF
+          S3 Backup Version Manager
+
+          Usage: $(basename "$0") <filename> <command> [options]
+
+          Arguments:
+            filename                The basename of the file to manage (e.g., fail2ban.sqlite3)
+
+          Commands:
+            list                    List all versions in detailed format
+            list-table              List all versions in compact table format
+            download-latest [dest]  Download the latest version
+            download <id> [dest]    Download a specific version by ID
+            restore <id>            Restore a specific version as the current version
+
+          Configuration:
+            Reads from /etc/s3-backup/backup.conf or environment variables:
+            - S3_BUCKET:      S3 bucket name (required)
+            - S3_PREFIX:      Prefix/folder in bucket (default: backups)
+            - AWS_REGION:     AWS region (default: us-east-2)
+
+          Examples:
+            $(basename "$0") fail2ban.sqlite3 list
+            $(basename "$0") fail2ban.sqlite3 list-table
+            $(basename "$0") fail2ban.sqlite3 download-latest /tmp/restore.dat
+            $(basename "$0") fail2ban.sqlite3 download abc123def456 /tmp/old-version.dat
+            $(basename "$0") fail2ban.sqlite3 restore abc123def456
+
+          EOF
+          }
+
+          # Main - require filename as first argument
+          if [[ $# -lt 2 ]]; then
+              usage
+              exit 1
+          fi
+
+          FILENAME="$1"
+          COMMAND="$2"
+          shift 2
+
+          case "${COMMAND}" in
+              list)
+                  list_versions "${FILENAME}"
+                  ;;
+              list-table)
+                  list_versions_table "${FILENAME}"
+                  ;;
+              download-latest)
+                  download_latest "${FILENAME}" "${1:-}"
+                  ;;
+              download)
+                  download_version "${FILENAME}" "${1:-}" "${2:-}"
+                  ;;
+              restore)
+                  restore_version "${FILENAME}" "${1:-}"
+                  ;;
+              -h|--help|help)
+                  usage
+                  ;;
+              *)
+                  usage
+                  exit 1
+                  ;;
+          esac{% endraw %}
+        dest: "{{ scripts_dir }}/s3-backup-versions.sh"
+        mode: '0755'
+        owner: root
+        group: root
+
+    # Deploy configuration files
+    - name: Create backup configuration file
+      ansible.builtin.copy:
+        content: |
+          # S3 Backup Configuration
+          S3_BUCKET="{{ backup_bucket }}"
+          S3_PREFIX="backups"
+          AWS_REGION="us-east-2"
+          FILES_CONF="{{ config_dir }}/files.conf"
+        dest: "{{ config_dir }}/backup.conf"
+        mode: '0600'
+        owner: root
+        group: root
+
+    - name: Create backup files list
+      ansible.builtin.copy:
+        content: |
+          # List of files to back up (one per line)
+          # Lines starting with # are comments
+          {% for file in backup_files %}
+          {{ file }}
+          {% endfor %}
+        dest: "{{ config_dir }}/files.conf"
+        mode: '0644'
+        owner: root
+        group: root
+
+    # Deploy systemd units
+    - name: Deploy s3-backup systemd service
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=S3 Backup Service - Copy files to versioned S3 bucket
+          Documentation=https://docs.aws.amazon.com/cli/latest/reference/s3/cp.html
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+
+          # Run as root
+          User=root
+          Group=root
+
+          # Load environment variables from config file
+          EnvironmentFile={{ config_dir }}/backup.conf
+
+          # Execute the backup script
+          ExecStart={{ scripts_dir }}/s3-backup.sh
+
+          # Logging
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=s3-backup
+
+          # Security hardening
+          NoNewPrivileges=yes
+          ProtectSystem=strict
+          ProtectHome=read-only
+          PrivateTmp=yes
+
+          # Allow read access to the backup source
+          ReadOnlyPaths=/
+
+          # Timeout after 10 minutes
+          TimeoutStartSec=600
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: "{{ systemd_dir }}/s3-backup.service"
+        mode: '0644'
+        owner: root
+        group: root
+      notify: Reload systemd
+
+    - name: Deploy s3-backup systemd timer
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=S3 Backup Timer - Runs daily
+          Documentation=man:systemd.timer(5)
+
+          [Timer]
+          # Run daily at 02:00
+          OnCalendar=daily
+          # Specific time (02:00)
+          OnCalendar=*-*-* 02:00:00
+
+          # Add randomized delay up to 5 minutes to avoid thundering herd
+          RandomizedDelaySec=300
+
+          # Run immediately if a scheduled run was missed (e.g., system was off)
+          Persistent=true
+
+          # Accuracy of the timer (1 minute is fine for backups)
+          AccuracySec=1min
+
+          [Install]
+          WantedBy=timers.target
+        dest: "{{ systemd_dir }}/s3-backup.timer"
+        mode: '0644'
+        owner: root
+        group: root
+      notify: Reload systemd
+
+    # Enable and start timer
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start s3-backup timer
+      ansible.builtin.systemd:
+        name: s3-backup.timer
+        enabled: true
+        state: started
+
+    - name: Display backup status
+      ansible.builtin.command: systemctl status s3-backup.timer --no-pager
+      register: timer_status
+      changed_when: false
+
+    - name: Show timer status
+      ansible.builtin.debug:
+        var: timer_status.stdout_lines

@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+#MISE description="Restore a backup version as the current version in S3"
+
+set -euo pipefail
+
+# Parse command line arguments
+FILENAME="${1:-}"
+VERSION_ID="${2:-}"
+
+# Configuration Variables
+REGION="us-east-2"
+STACK_NAME="${PROJECT_NAME}-Infrastructure"
+
+#####################################################################
+# Helper Functions
+#####################################################################
+
+log_info() {
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_warn() {
+    echo "[WARN]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_success() {
+    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+handle_error() {
+    log_error "Script failed at line $1"
+    exit 1
+}
+
+trap 'handle_error $LINENO' ERR
+
+#####################################################################
+# Prerequisites Check
+#####################################################################
+
+check_prerequisites() {
+    log_info "Checking prerequisites..."
+
+    if [[ -z $FILENAME ]]; then
+        log_error "Filename is required"
+        log_error "Usage: mise run infra:backup-restore <filename> <version-id>"
+        log_error "Example: mise run infra:backup-restore fail2ban.sqlite3 abc123def456"
+        exit 1
+    fi
+
+    if [[ -z $VERSION_ID ]]; then
+        log_error "Version ID is required"
+        log_error "Usage: mise run infra:backup-restore <filename> <version-id>"
+        log_error "Use 'mise run infra:backup-list-versions <filename>' to see available versions"
+        exit 1
+    fi
+
+    if ! command -v aws &>/dev/null; then
+        log_error "AWS CLI is not installed"
+        exit 1
+    fi
+
+    if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
+        log_error "AWS credentials not configured or expired"
+        exit 1
+    fi
+
+    log_success "Prerequisites validated"
+}
+
+#####################################################################
+# Get Instance ID
+#####################################################################
+
+get_instance_id() {
+    log_info "Getting instance ID from CloudFormation stack: $STACK_NAME"
+
+    local instance_id
+    instance_id=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+        --output text 2>/dev/null)
+
+    if [[ -z $instance_id || $instance_id == "None" ]]; then
+        log_error "Could not retrieve instance ID from stack outputs"
+        exit 1
+    fi
+
+    echo "$instance_id"
+}
+
+#####################################################################
+# Confirm Restore
+#####################################################################
+
+confirm_restore() {
+    echo "" >&2
+    log_warn "WARNING: This will restore version $VERSION_ID as the current version in S3"
+    log_warn "The current version will become a previous version (it won't be lost)"
+    echo "" >&2
+    read -p "Are you sure you want to continue? [y/N] " -n 1 -r >&2
+    echo "" >&2
+
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Restore cancelled by user"
+        exit 0
+    fi
+}
+
+#####################################################################
+# Execute Command via SSM
+#####################################################################
+
+execute_command() {
+    local instance_id="$1"
+
+    log_info "Restoring version $VERSION_ID of $FILENAME"
+
+    # Execute command via SSM
+    local command_id
+    command_id=$(aws ssm send-command \
+        --document-name "AWS-RunShellScript" \
+        --instance-ids "$instance_id" \
+        --parameters "commands=['/usr/local/bin/s3-backup-versions.sh \"$FILENAME\" restore \"$VERSION_ID\"']" \
+        --region "$REGION" \
+        --query 'Command.CommandId' \
+        --output text)
+
+    log_success "Command sent with ID: $command_id"
+
+    # Wait for completion
+    log_info "Waiting for restore to complete..."
+    aws ssm wait command-executed \
+        --command-id "$command_id" \
+        --instance-id "$instance_id" \
+        --region "$REGION" 2>/dev/null || true
+
+    # Get output
+    local output
+    output=$(aws ssm get-command-invocation \
+        --command-id "$command_id" \
+        --instance-id "$instance_id" \
+        --region "$REGION" \
+        --query 'StandardOutputContent' \
+        --output text)
+
+    echo ""
+    echo "$output"
+    echo ""
+
+    # Check status
+    local status
+    status=$(aws ssm get-command-invocation \
+        --command-id "$command_id" \
+        --instance-id "$instance_id" \
+        --region "$REGION" \
+        --query 'Status' \
+        --output text)
+
+    if [[ $status != "Success" ]]; then
+        log_error "Command failed with status: $status"
+
+        # Get error output
+        local error_output
+        error_output=$(aws ssm get-command-invocation \
+            --command-id "$command_id" \
+            --instance-id "$instance_id" \
+            --region "$REGION" \
+            --query 'StandardErrorContent' \
+            --output text)
+
+        if [[ -n $error_output ]]; then
+            echo "Error output:" >&2
+            echo "$error_output" >&2
+        fi
+
+        exit 1
+    fi
+
+    log_success "Restore completed successfully"
+}
+
+#####################################################################
+# Main Function
+#####################################################################
+
+main() {
+    echo "" >&2
+    log_info "Restoring backup version in S3"
+    echo "" >&2
+
+    check_prerequisites
+    confirm_restore
+
+    local instance_id
+    instance_id=$(get_instance_id)
+
+    execute_command "$instance_id"
+    echo "" >&2
+}
+
+main "$@"

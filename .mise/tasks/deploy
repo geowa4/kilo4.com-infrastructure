@@ -48,8 +48,9 @@ usage() {
     echo "  2. Ansible playbooks upload to S3"
     echo "  3. System hardening via Ansible"
     echo "  4. Base packages installation"
-    echo "  5. State Manager association for scheduled hardening"
-    echo "  6. Patch Manager configuration (if EMAIL_ADDRESS is set in mise.toml)"
+    echo "  5. S3 backup system deployment"
+    echo "  6. State Manager association for scheduled hardening"
+    echo "  7. Patch Manager configuration (if EMAIL_ADDRESS is set in mise.toml)"
     echo ""
     echo "Configuration:"
     echo "  Set EMAIL_ADDRESS in mise.toml for patch notification emails"
@@ -227,6 +228,27 @@ run_base_packages_playbook() {
     log_success "Base packages playbook executed"
 }
 
+run_backup_playbook() {
+    log_info "Running S3 backup system playbook..."
+
+    # Get backup bucket name from stack outputs
+    local backup_bucket
+    backup_bucket=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='BackupBucketName'].OutputValue" \
+        --output text 2>/dev/null)
+
+    if [[ -z $backup_bucket || $backup_bucket == "None" ]]; then
+        log_error "Could not retrieve backup bucket name from stack outputs"
+        exit 1
+    fi
+
+    # Pass backup_bucket as an Ansible extra variable
+    mise run infra:run-ansible-playbook "$PROJECT_ROOT/playbooks/s3-backup.yml" "" "backup_bucket=$backup_bucket"
+    log_success "S3 backup system playbook executed"
+}
+
 create_state_manager_association() {
     log_info "Creating State Manager association for scheduled hardening..."
     mise run infra:create-ansible-association hardening.yml
@@ -285,14 +307,18 @@ print_deployment_summary() {
     echo "1. Verify SSH access:"
     echo "   ssh ec2-user@$public_ip"
     echo ""
-    echo "2. Configure SES for email sending (optional):"
+    echo "2. Test backup system:"
+    echo "   mise run infra:backup-run"
+    echo "   mise run infra:backup-list-versions fail2ban.sqlite3"
+    echo ""
+    echo "3. Configure SES for email sending (optional):"
     echo "   mise run ses:verify-domain ${DOMAIN_NAME}"
     echo "   See docs/ses-setup.md for details"
     echo ""
-    echo "3. Monitor patch compliance in AWS Console:"
+    echo "4. Monitor patch compliance in AWS Console:"
     echo "   Systems Manager > Patch Manager > Compliance"
     echo ""
-    echo "4. View deployed resources:"
+    echo "5. View deployed resources:"
     echo "   aws cloudformation describe-stack-resources --stack-name $STACK_NAME --region $REGION"
     echo ""
 }
@@ -316,6 +342,7 @@ main() {
     upload_playbooks
     run_hardening_playbook
     run_base_packages_playbook
+    run_backup_playbook
     create_state_manager_association
     configure_patch_manager
     print_deployment_summary

@@ -6,6 +6,7 @@ set -euo pipefail
 # Parse command line arguments
 PLAYBOOK_PATH="${1:-}"
 INSTANCE_ID="${2:-}"
+EXTRA_VARS="${3:-}"
 
 # Configuration Variables
 REGION="us-east-2"
@@ -146,10 +147,18 @@ execute_playbook() {
     local bucket_name="$1"
     local instance_id="$2"
     local playbook_name="$3"
+    local extra_vars="$4"
 
     log_info "Executing playbook: $playbook_name"
     log_info "Target instance: $instance_id"
     log_info "S3 source: s3://$bucket_name/playbooks/"
+
+    # Build extra variables string
+    local ansible_extra_vars="SSM=True"
+    if [[ -n $extra_vars ]]; then
+        ansible_extra_vars="SSM=True $extra_vars"
+        log_info "Extra variables: $extra_vars"
+    fi
 
     # Send SSM command
     local command_id
@@ -161,7 +170,7 @@ execute_playbook() {
             "SourceInfo": ["{\"path\":\"https://s3.'"$REGION"'.amazonaws.com/'"$bucket_name"'/playbooks/'"$playbook_name"'\"}"],
             "InstallDependencies": ["True"],
             "PlaybookFile": ["'"$playbook_name"'"],
-            "ExtraVariables": ["SSM=True"],
+            "ExtraVariables": ["'"$ansible_extra_vars"'"],
             "Verbose": ["-v"]
         }' \
         --timeout-seconds "$TIMEOUT_SECONDS" \
@@ -283,7 +292,7 @@ main() {
     playbook_name=$(upload_playbook "$bucket_name")
 
     local command_id
-    command_id=$(execute_playbook "$bucket_name" "$instance_id" "$playbook_name")
+    command_id=$(execute_playbook "$bucket_name" "$instance_id" "$playbook_name" "$EXTRA_VARS")
 
     wait_for_completion "$command_id" "$instance_id"
     display_output "$command_id" "$instance_id"
