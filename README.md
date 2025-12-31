@@ -1,6 +1,6 @@
 # kilo4.com Infrastructure
 
-AWS infrastructure for kilo4.com using CloudFormation in us-east-2.
+AWS infrastructure using CloudFormation in us-east-2.
 
 ## Deploy
 
@@ -19,7 +19,7 @@ mise run infra:update-stack
 ```bash
 # Get instance IP
 aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=kilo4-Instance" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:Name,Values=${PROJECT_NAME}-Instance" "Name=instance-state-name,Values=running" \
   --query 'Reservations[0].Instances[0].PublicIpAddress' \
   --output text \
   --region us-east-2

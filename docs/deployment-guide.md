@@ -1,13 +1,13 @@
 # Deployment Guide
 
-This guide covers deploying and managing the complete kilo4.com infrastructure on AWS.
+This guide covers deploying and managing the project infrastructure on AWS.
 
 ## Overview
 
-The kilo4 infrastructure consists of:
+The infrastructure consists of:
 
 - **Region**: us-east-2
-- **Stack Name**: kilo4-Infrastructure
+- **Stack Name**: ${PROJECT_NAME}-Infrastructure
 - **Primary Components**: VPC, EC2 instance (t4g.small ARM), IAM roles, S3 bucket, SNS topics
 - **Management**: AWS Systems Manager (SSM) with Ansible for configuration
 - **Automation**: CloudFormation for infrastructure, Ansible for configuration
@@ -84,13 +84,10 @@ For a complete deployment from scratch:
 
 ```bash
 # Clone repository
-cd /path/to/kilo4.com
+cd <your-repo-directory>
 
-# Deploy everything (including patch notifications)
-./scripts/deploy.sh your-email@example.com
-
-# Or deploy without patch manager
-./scripts/deploy.sh
+# Deploy everything
+mise run deploy
 ```
 
 The script will:
@@ -109,8 +106,8 @@ The script will:
 ### Step 1: Clone Repository
 
 ```bash
-git clone https://github.com/geowa4/kilo4.com.git
-cd kilo4.com
+git clone <your-repo-url>
+cd <your-repo-directory>
 ```
 
 ### Step 2: Review Infrastructure Template
@@ -133,7 +130,7 @@ Key resources:
 ### Step 3: Run Deployment Script
 
 ```bash
-./scripts/deploy.sh admin@example.com
+mise run deploy
 ```
 
 The script performs the following phases:
@@ -181,7 +178,7 @@ See [Verification](#verification) section below.
 ```bash
 # Check stack status
 aws cloudformation describe-stacks \
-  --stack-name kilo4-Infrastructure \
+  --stack-name ${PROJECT_NAME}-Infrastructure \
   --region us-east-2 \
   --query 'Stacks[0].StackStatus' \
   --output text
@@ -190,7 +187,7 @@ aws cloudformation describe-stacks \
 
 # List all resources
 aws cloudformation describe-stack-resources \
-  --stack-name kilo4-Infrastructure \
+  --stack-name ${PROJECT_NAME}-Infrastructure \
   --region us-east-2 \
   --output table
 ```
@@ -200,7 +197,7 @@ aws cloudformation describe-stack-resources \
 ```bash
 # Get instance ID and status
 aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=kilo4-Instance" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:Name,Values=${PROJECT_NAME}-Instance" "Name=instance-state-name,Values=running" \
   --query 'Reservations[0].Instances[0].[InstanceId,State.Name,PublicIpAddress]' \
   --output table \
   --region us-east-2
@@ -225,7 +222,7 @@ aws ssm describe-instance-information \
 ```bash
 # List playbooks in S3
 BUCKET=$(aws cloudformation describe-stacks \
-  --stack-name kilo4-Infrastructure \
+  --stack-name ${PROJECT_NAME}-Infrastructure \
   --region us-east-2 \
   --query "Stacks[0].Outputs[?OutputKey=='AnsiblePlaybooksBucketName'].OutputValue" \
   --output text)
@@ -241,10 +238,10 @@ aws s3 ls s3://$BUCKET/playbooks/
 # List State Manager associations
 aws ssm list-associations \
   --region us-east-2 \
-  --query 'Associations[?starts_with(AssociationName, `kilo4-`)].[AssociationName,Status.Name]' \
+  --query 'Associations[?starts_with(AssociationName, `${PROJECT_NAME}-`)].[AssociationName,Status.Name]' \
   --output table
 
-# Expected: kilo4-ansible-hardening with Success status
+# Expected: ${PROJECT_NAME}-hardening-Playbook with Success status
 ```
 
 ### Verify SSH Access
@@ -252,7 +249,7 @@ aws ssm list-associations \
 ```bash
 # Get public IP
 PUBLIC_IP=$(aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=kilo4-Instance" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:Name,Values=${PROJECT_NAME}-Instance" "Name=instance-state-name,Values=running" \
   --query 'Reservations[0].Instances[0].PublicIpAddress' \
   --output text \
   --region us-east-2)
@@ -276,7 +273,7 @@ go version
 If your IP address changes:
 
 ```bash
-./scripts/infra/update-stack.sh
+mise run infra:update-stack
 ```
 
 This automatically:
@@ -290,10 +287,10 @@ To manually apply playbooks:
 
 ```bash
 # System hardening
-./scripts/infra/run-ansible-playbook.sh playbooks/hardening.yml
+mise run infra:run-ansible-playbook playbooks/hardening.yml
 
 # Base packages
-./scripts/infra/run-ansible-playbook.sh playbooks/base-packages.yml
+mise run infra:run-ansible-playbook playbooks/base-packages.yml
 ```
 
 ### Update Stack with Changes
@@ -301,7 +298,7 @@ To manually apply playbooks:
 After modifying `infrastructure.yaml`:
 
 ```bash
-./scripts/infra/update-stack.sh
+mise run infra:update-stack
 ```
 
 ### Re-deploy Everything
@@ -309,7 +306,7 @@ After modifying `infrastructure.yaml`:
 To ensure all components are current:
 
 ```bash
-./scripts/deploy.sh your-email@example.com
+mise run deploy
 ```
 
 The script is idempotent - safe to run multiple times.
@@ -319,7 +316,7 @@ The script is idempotent - safe to run multiple times.
 To completely remove all infrastructure:
 
 ```bash
-./scripts/teardown.sh
+mise run teardown
 ```
 
 This will:
@@ -334,7 +331,7 @@ This will:
 ### Force Teardown (Skip Confirmation)
 
 ```bash
-./scripts/teardown.sh --force
+mise run teardown -- --force
 ```
 
 ### What Gets Deleted
@@ -360,7 +357,7 @@ This will:
 
 **Solution**: Stack already exists. Use update instead:
 ```bash
-./scripts/infra/update-stack.sh
+mise run infra:update-stack
 ```
 
 ---
@@ -383,7 +380,7 @@ aws cloudformation validate-template \
 1. **Check instance is running**:
 ```bash
 INSTANCE_ID=$(aws cloudformation describe-stacks \
-  --stack-name kilo4-Infrastructure \
+  --stack-name ${PROJECT_NAME}-Infrastructure \
   --region us-east-2 \
   --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
   --output text)
@@ -442,11 +439,12 @@ aws ssm get-command-invocation \
 
 **Error**: Patch Manager skipped during deployment
 
-**Cause**: Email address not provided to deploy.sh
+**Cause**: EMAIL_ADDRESS not set in mise.toml
 
 **Solution**:
+Set EMAIL_ADDRESS in mise.toml and run:
 ```bash
-./scripts/infra/configure-patch-manager.sh your-email@example.com
+mise run infra:configure-patch-manager
 ```
 
 ### Cannot SSH to Instance
@@ -458,20 +456,20 @@ aws ssm get-command-invocation \
 1. **Verify your IP is allowed**:
 ```bash
 aws ec2 describe-security-groups \
-  --filters "Name=tag:Name,Values=kilo4-SSH-SecurityGroup" \
+  --filters "Name=tag:Name,Values=${PROJECT_NAME}-SSH-SecurityGroup" \
   --region us-east-2 \
   --query 'SecurityGroups[0].IpPermissions[0].IpRanges[0].CidrIp'
 ```
 
 2. **Update security group with current IP**:
 ```bash
-./scripts/infra/update-stack.sh
+mise run infra:update-stack
 ```
 
 3. **Check instance has public IP**:
 ```bash
 aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=kilo4-Instance" \
+  --filters "Name=tag:Name,Values=${PROJECT_NAME}-Instance" \
   --query 'Reservations[0].Instances[0].PublicIpAddress' \
   --region us-east-2
 ```
@@ -487,37 +485,37 @@ SES configuration is separate from infrastructure deployment.
 
 **Verify domain**:
 ```bash
-./scripts/ses/verify-domain.sh kilo4.com
+mise run ses:verify-domain ${DOMAIN_NAME}
 ```
 
 **Complete guide**: See [docs/ses-setup.md](ses-setup.md) for comprehensive SES setup instructions.
 
-### Run Individual Scripts
+### Run Individual Tasks
 
-All deployment scripts can be run independently:
+All tasks can be run independently:
 
 ```bash
 # Update CloudFormation stack
-./scripts/infra/update-stack.sh
+mise run infra:update-stack
 
 # Upload playbooks to S3
-./scripts/infra/upload-playbooks.sh
+mise run infra:upload-playbooks
 
 # Run specific playbook
-./scripts/infra/run-ansible-playbook.sh playbooks/hardening.yml
+mise run infra:run-ansible-playbook playbooks/hardening.yml
 
 # Create State Manager association
-./scripts/infra/create-ansible-association.sh hardening.yml
+mise run infra:create-ansible-association hardening.yml
 
 # Configure Patch Manager
-./scripts/infra/configure-patch-manager.sh admin@example.com
+mise run infra:configure-patch-manager
 
 # Verify SES domain
-./scripts/ses/verify-domain.sh kilo4.com
+mise run ses:verify-domain ${DOMAIN_NAME}
 
 # Test SES email
-python3 scripts/ses/test-email.py \
-  --from noreply@kilo4.com \
+mise run ses:test-email -- \
+  --from noreply@${DOMAIN_NAME} \
   --to test@example.com \
   --subject "Test" \
   --body "Test message"
@@ -547,7 +545,7 @@ python3 scripts/ses/test-email.py \
 
 ### IAM Permissions
 
-The EC2 instance role (`kilo4-EC2-SSM-SES-Role`) has:
+The EC2 instance role (`${PROJECT_NAME}-EC2-SSM-SES-Role`) has:
 
 1. **Managed Policy**: AmazonSSMManagedInstanceCore
    - Allows SSM agent communication
@@ -592,29 +590,29 @@ The stack provides these outputs for scripting:
 
 ```bash
 # Deploy everything
-./scripts/deploy.sh admin@example.com
+mise run deploy
 
 # Update SSH IP
-./scripts/infra/update-stack.sh
+mise run infra:update-stack
 
 # Run playbook
-./scripts/infra/run-ansible-playbook.sh playbooks/hardening.yml
+mise run infra:run-ansible-playbook playbooks/hardening.yml
 
 # Check stack status
 aws cloudformation describe-stacks \
-  --stack-name kilo4-Infrastructure \
+  --stack-name ${PROJECT_NAME}-Infrastructure \
   --region us-east-2
 
 # Get instance IP
 aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=kilo4-Instance" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:Name,Values=${PROJECT_NAME}-Instance" "Name=instance-state-name,Values=running" \
   --query 'Reservations[0].Instances[0].PublicIpAddress' \
   --output text \
   --region us-east-2
 
 # SSH to instance
 ssh ec2-user@$(aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=kilo4-Instance" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:Name,Values=${PROJECT_NAME}-Instance" "Name=instance-state-name,Values=running" \
   --query 'Reservations[0].Instances[0].PublicIpAddress' \
   --output text \
   --region us-east-2)
@@ -629,25 +627,20 @@ aws ssm list-commands \
   --max-items 10
 
 # Teardown everything
-./scripts/teardown.sh
+mise run teardown
 ```
 
 ### File Locations
 
 ```
-kilo4.com/
+<project-directory>/
 ├── infrastructure.yaml          # CloudFormation template
-├── scripts/
-│   ├── deploy.sh                # Master deployment script
-│   ├── teardown.sh              # Cleanup script
-│   ├── update-stack.sh          # Update stack with current IP
-│   ├── upload-playbooks.sh      # Upload playbooks to S3
-│   ├── run-ansible-playbook.sh  # Execute playbook via SSM
-│   ├── create-ansible-association.sh  # State Manager setup
-│   ├── configure-patch-manager.sh     # Patch Manager setup
-│   ├── verify-ses-domain.sh     # Verify SES domain
-│   ├── verify-ses-identity.sh   # Verify SES email
-│   └── test-ses-email.py        # Send test email
+├── .mise/
+│   └── tasks/                   # Mise task definitions
+│       ├── deploy               # Master deployment task
+│       ├── teardown             # Cleanup task
+│       ├── infra/               # Infrastructure tasks
+│       └── ses/                 # SES tasks
 ├── playbooks/
 │   ├── hardening.yml            # System hardening
 │   └── base-packages.yml        # Development tools

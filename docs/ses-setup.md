@@ -1,13 +1,13 @@
 # Amazon SES Setup Guide
 
-This guide covers setting up Amazon Simple Email Service (SES) for sending emails from the kilo4.com infrastructure.
+This guide covers setting up Amazon Simple Email Service (SES) for sending emails from the infrastructure.
 
 ## Overview
 
 Amazon SES is a cloud-based email sending service that provides a reliable, cost-effective way to send transactional and marketing emails. This setup uses:
 - **Region**: us-east-2
-- **Sender**: noreply@kilo4.com
-- **Domain**: kilo4.com
+- **Sender**: noreply@${DOMAIN_NAME}
+- **Domain**: ${DOMAIN_NAME}
 - **Sending Methods**: Both API (boto3) and SMTP
 
 ## SES Sandbox Mode
@@ -49,14 +49,14 @@ Review typically takes 24-48 hours.
 
 ### Verify Email Addresses
 
-Use the provided script to verify sender and recipient email addresses:
+Use the mise task to verify sender and recipient email addresses:
 
 ```bash
 # Verify sender email
-./scripts/ses/verify-identity.sh noreply@kilo4.com
+mise run ses:verify-identity noreply@${DOMAIN_NAME}
 
 # Verify additional recipient emails (for sandbox testing)
-./scripts/ses/verify-identity.sh noreply@kilo4.com test@example.com
+mise run ses:verify-identity noreply@${DOMAIN_NAME} test@example.com
 ```
 
 What happens:
@@ -70,29 +70,29 @@ What happens:
 Domain verification is recommended for better deliverability and required before requesting production access:
 
 ```bash
-./scripts/ses/verify-domain.sh kilo4.com
+mise run ses:verify-domain ${DOMAIN_NAME}
 ```
 
-The script will output DNS records you need to add:
+The task will output DNS records you need to add to your domain:
 
 #### Domain Verification Record
 ```
-Name:  _amazonses.kilo4.com
+Name:  _amazonses.${DOMAIN_NAME}
 Type:  TXT
 Value: <verification-token>
 ```
 
 #### DKIM Records (3 CNAME records)
 ```
-Name:  <token1>._domainkey.kilo4.com
+Name:  <token1>._domainkey.${DOMAIN_NAME}
 Type:  CNAME
 Value: <token1>.dkim.amazonses.com
 
-Name:  <token2>._domainkey.kilo4.com
+Name:  <token2>._domainkey.${DOMAIN_NAME}
 Type:  CNAME
 Value: <token2>.dkim.amazonses.com
 
-Name:  <token3>._domainkey.kilo4.com
+Name:  <token3>._domainkey.${DOMAIN_NAME}
 Type:  CNAME
 Value: <token3>.dkim.amazonses.com
 ```
@@ -104,8 +104,8 @@ After adding DNS records:
 - Can take up to 72 hours in rare cases
 - Check propagation status:
   ```bash
-  dig TXT _amazonses.kilo4.com +short
-  dig CNAME <token>._domainkey.kilo4.com +short
+  dig TXT _amazonses.${DOMAIN_NAME} +short
+  dig CNAME <token>._domainkey.${DOMAIN_NAME} +short
   ```
 
 ### Why DKIM?
@@ -120,11 +120,11 @@ DKIM (DomainKeys Identified Mail) provides:
 
 ### API Sending (Recommended)
 
-The Python script uses boto3 to send via the SES API:
+The mise task uses boto3 to send via the SES API:
 
 ```bash
-python3 scripts/ses/test-email.py \
-    --from noreply@kilo4.com \
+mise run ses:test-email -- \
+    --from noreply@${DOMAIN_NAME} \
     --to recipient@example.com \
     --subject "Test Email" \
     --body "This is a test email from Amazon SES"
@@ -203,7 +203,7 @@ smtp_username = "<SMTP_USERNAME>"
 smtp_password = "<SMTP_PASSWORD>"
 
 # Email content
-sender = "noreply@kilo4.com"
+sender = "noreply@${DOMAIN_NAME}"
 recipient = "recipient@example.com"
 subject = "Test Email via SMTP"
 
@@ -228,7 +228,7 @@ Before sending test emails:
 
 ```bash
 # 1. Verify identities are confirmed
-./scripts/ses/verify-identity.sh noreply@kilo4.com
+mise run ses:verify-identity noreply@${DOMAIN_NAME}
 
 # 2. Check sending quota
 aws ses get-send-quota --region us-east-2
@@ -241,15 +241,15 @@ aws ses get-account-sending-enabled --region us-east-2
 
 ```bash
 # Simple text email
-python3 scripts/ses/test-email.py \
-    --from noreply@kilo4.com \
+mise run ses:test-email -- \
+    --from noreply@${DOMAIN_NAME} \
     --to your-email@example.com \
     --subject "SES Test Email" \
     --body "This is a test email to verify SES is working correctly."
 
 # HTML email
-python3 scripts/ses/test-email.py \
-    --from noreply@kilo4.com \
+mise run ses:test-email -- \
+    --from noreply@${DOMAIN_NAME} \
     --to your-email@example.com \
     --subject "SES HTML Test" \
     --body "Plain text version" \
@@ -264,7 +264,7 @@ python3 scripts/ses/test-email.py \
 ```
 **Solution**: Verify the email address:
 ```bash
-./scripts/ses/verify-identity.sh noreply@kilo4.com recipient@example.com
+mise run ses:verify-identity noreply@${DOMAIN_NAME} recipient@example.com
 ```
 
 #### Error: Daily sending quota exceeded
@@ -334,21 +334,7 @@ aws ce get-cost-and-usage \
 
 ## Integration with EC2
 
-The test script (`test-ses-email.py`) is deployed to EC2 via Ansible. It uses the instance IAM role for authentication, so no credential management is needed.
-
-### Running from EC2
-
-```bash
-# SSH to instance
-ssh ec2-user@<instance-ip>
-
-# Send test email (uses instance IAM role)
-python3 /opt/kilo4/scripts/ses/test-email.py \
-    --from noreply@kilo4.com \
-    --to recipient@example.com \
-    --subject "Test from EC2" \
-    --body "Testing SES from EC2 instance"
-```
+The EC2 instance has the SES permissions via its IAM role, allowing email sending without credential management.
 
 ## Additional Resources
 
@@ -361,14 +347,14 @@ python3 /opt/kilo4/scripts/ses/test-email.py \
 
 ```bash
 # Verify email address
-./scripts/ses/verify-identity.sh noreply@kilo4.com
+mise run ses:verify-identity noreply@${DOMAIN_NAME}
 
 # Verify domain with DKIM
-./scripts/ses/verify-domain.sh kilo4.com
+mise run ses:verify-domain ${DOMAIN_NAME}
 
 # Send test email
-python3 scripts/ses/test-email.py \
-    --from noreply@kilo4.com \
+mise run ses:test-email -- \
+    --from noreply@${DOMAIN_NAME} \
     --to recipient@example.com \
     --subject "Test" \
     --body "Test email"
@@ -379,6 +365,6 @@ aws ses get-send-quota --region us-east-2
 # Check verification status
 aws ses list-identities --region us-east-2
 aws ses get-identity-verification-attributes \
-    --identities noreply@kilo4.com \
+    --identities noreply@${DOMAIN_NAME} \
     --region us-east-2
 ```

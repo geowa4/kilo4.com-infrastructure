@@ -15,8 +15,10 @@ usage() {
     echo "Usage: mise run ses:verify-identity EMAIL [EMAIL...]"
     echo ""
     echo "Examples:"
-    echo "  mise run ses:verify-identity noreply@kilo4.com"
-    echo "  mise run ses:verify-identity noreply@kilo4.com test@example.com"
+    # shellcheck disable=SC2016
+    echo '  mise run ses:verify-identity noreply@${DOMAIN_NAME}'
+    # shellcheck disable=SC2016
+    echo '  mise run ses:verify-identity noreply@${DOMAIN_NAME} test@example.com'
     echo ""
     echo "This script will:"
     echo "  1. Request verification for each email address"
@@ -69,7 +71,7 @@ for IDENTITY in $IDENTITIES; do
     STATUS=$(aws ses get-identity-verification-attributes \
         --identities "$IDENTITY" \
         --region "$REGION" \
-        --output json | \
+        --output json |
         jq -r ".VerificationAttributes[\"$IDENTITY\"].VerificationStatus")
 
     if [ "$STATUS" = "Success" ]; then

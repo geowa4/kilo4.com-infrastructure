@@ -19,17 +19,17 @@ Both limits can be increased further by submitting support requests.
 ```bash
 # Check domain verification status
 aws ses get-identity-verification-attributes \
-    --identities kilo4.com \
+    --identities ${DOMAIN_NAME} \
     --region us-east-2 \
     --output json | \
-    jq -r '.VerificationAttributes["kilo4.com"].VerificationStatus'
+    jq -r '.VerificationAttributes["'${DOMAIN_NAME}'"].VerificationStatus'
 ```
 
 **Expected Output**: `Success`
 
 **If not verified**:
 ```bash
-./scripts/ses/verify-domain.sh kilo4.com
+mise run ses:verify-domain ${DOMAIN_NAME}
 ```
 
 ### 2. DKIM Configuration
@@ -39,10 +39,10 @@ aws ses get-identity-verification-attributes \
 ```bash
 # Check DKIM status
 aws ses get-identity-dkim-attributes \
-    --identities kilo4.com \
+    --identities ${DOMAIN_NAME} \
     --region us-east-2 \
     --output json | \
-    jq '.DkimAttributes["kilo4.com"]'
+    jq '.DkimAttributes["'${DOMAIN_NAME}'"]'
 ```
 
 **Expected Output**:
@@ -55,7 +55,7 @@ aws ses get-identity-dkim-attributes \
 
 **If not enabled**:
 ```bash
-./scripts/ses/verify-domain.sh kilo4.com
+mise run ses:verify-domain ${DOMAIN_NAME}
 ```
 
 ### 3. SPF Record Configuration
@@ -64,7 +64,7 @@ aws ses get-identity-dkim-attributes \
 
 ```bash
 # Check SPF record
-dig TXT kilo4.com +short | grep spf
+dig TXT ${DOMAIN_NAME} +short | grep spf
 ```
 
 **Expected Output**: Should include `include:amazonses.com` or similar
@@ -87,7 +87,7 @@ The SNS topic for bounces is managed in CloudFormation (`infrastructure.yaml`). 
 ```bash
 # Get the bounce topic ARN from CloudFormation stack
 BOUNCE_TOPIC_ARN=$(aws cloudformation describe-stacks \
-    --stack-name kilo4-Infrastructure \
+    --stack-name ${PROJECT_NAME}-Infrastructure \
     --region us-east-2 \
     --query 'Stacks[0].Outputs[?OutputKey==`SESBouncesTopicArn`].OutputValue' \
     --output text)
@@ -100,7 +100,7 @@ echo "Bounce Topic ARN: $BOUNCE_TOPIC_ARN"
 ```bash
 # Set bounce notification topic (use the ARN from above)
 aws ses set-identity-notification-topic \
-    --identity kilo4.com \
+    --identity ${DOMAIN_NAME} \
     --notification-type Bounce \
     --sns-topic "$BOUNCE_TOPIC_ARN" \
     --region us-east-2
@@ -137,7 +137,7 @@ The SNS topic for complaints is managed in CloudFormation (`infrastructure.yaml`
 ```bash
 # Get the complaint topic ARN from CloudFormation stack
 COMPLAINT_TOPIC_ARN=$(aws cloudformation describe-stacks \
-    --stack-name kilo4-Infrastructure \
+    --stack-name ${PROJECT_NAME}-Infrastructure \
     --region us-east-2 \
     --query 'Stacks[0].Outputs[?OutputKey==`SESComplaintsTopicArn`].OutputValue' \
     --output text)
@@ -150,7 +150,7 @@ echo "Complaint Topic ARN: $COMPLAINT_TOPIC_ARN"
 ```bash
 # Set complaint notification topic (use the ARN from above)
 aws ses set-identity-notification-topic \
-    --identity kilo4.com \
+    --identity ${DOMAIN_NAME} \
     --notification-type Complaint \
     --sns-topic "$COMPLAINT_TOPIC_ARN" \
     --region us-east-2
@@ -172,7 +172,7 @@ aws sns subscribe \
 
 AWS reviews production access requests to prevent spam. Be prepared to demonstrate:
 
-- **Live website**: https://kilo4.com should be accessible
+- **Live website**: https://${DOMAIN_NAME} should be accessible
 - **Contact information**: Website should have visible contact details
 - **Privacy policy**: If collecting email addresses
 - **Terms of service**: If applicable
@@ -185,7 +185,7 @@ AWS reviews production access requests to prevent spam. Be prepared to demonstra
 For **transactional emails**, describe:
 
 ```
-We use Amazon SES to send transactional emails from our website kilo4.com.
+We use Amazon SES to send transactional emails from our website ${DOMAIN_NAME}.
 These include:
 - User account notifications
 - Password reset emails
@@ -231,7 +231,7 @@ aws sesv2 get-account --region us-east-2
 ```bash
 # Check if any alarms are triggered
 aws cloudwatch describe-alarms \
-    --alarm-names kilo4-ses-high-bounce-rate kilo4-ses-high-complaint-rate \
+    --alarm-names ${PROJECT_NAME}-ses-high-bounce-rate ${PROJECT_NAME}-ses-high-complaint-rate \
     --region us-east-2
 ```
 
@@ -246,11 +246,11 @@ Once all prerequisites are complete:
 5. Website is live and legitimate
 6. Use case description is prepared
 
-Run the production access request script:
+Run the production access request task:
 
 ```bash
-./scripts/ses/request-production.sh \
-    --use-case "Transactional emails for kilo4.com user notifications and system alerts"
+mise run ses:request-production -- \
+    --use-case "Transactional emails for ${DOMAIN_NAME} user notifications and system alerts"
 ```
 
 ## Post-Approval Steps
@@ -287,8 +287,8 @@ Expected output shows higher limits:
 
 ```bash
 # Send to any email address (no longer restricted to verified addresses)
-python3 scripts/ses/test-email.py \
-    --from noreply@kilo4.com \
+mise run ses:test-email -- \
+    --from noreply@${DOMAIN_NAME} \
     --to any-recipient@example.com \
     --subject "Production Test" \
     --body "Testing production access"

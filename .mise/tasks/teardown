@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Tear down all kilo4 infrastructure resources"
+#MISE description="Tear down all project infrastructure resources"
 
 set -euo pipefail
 
@@ -43,7 +43,7 @@ trap 'handle_error $LINENO' ERR
 usage() {
     echo "Usage: mise run teardown [-- --force]"
     echo ""
-    echo "Tears down all kilo4 infrastructure resources:"
+    echo "Tears down all infrastructure resources:"
     echo "  - State Manager associations"
     echo "  - Patch Manager resources (windows, baselines, SNS)"
     echo "  - S3 bucket contents"
@@ -94,7 +94,7 @@ confirm_teardown() {
     echo "  WARNING: Infrastructure Teardown"
     echo "=============================================="
     echo ""
-    echo "This will DELETE ALL kilo4 infrastructure resources:"
+    echo "This will DELETE ALL infrastructure resources:"
     echo ""
     echo "  - CloudFormation stack (VPC, EC2, IAM)"
     echo "  - S3 bucket and all playbooks"
@@ -329,7 +329,7 @@ print_teardown_summary() {
 
 main() {
     echo "=============================================="
-    echo "  kilo4 Infrastructure Teardown"
+    echo "  Infrastructure Teardown"
     echo "=============================================="
     echo ""
 

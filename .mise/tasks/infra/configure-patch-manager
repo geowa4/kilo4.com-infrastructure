@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Configure AWS Systems Manager Patch Manager for kilo4 infrastructure"
+#MISE description="Configure AWS Systems Manager Patch Manager"
 
 set -euo pipefail
 

@@ -16,7 +16,8 @@ usage() {
     echo "Usage: mise run ses:verify-domain DOMAIN"
     echo ""
     echo "Example:"
-    echo "  mise run ses:verify-domain kilo4.com"
+    # shellcheck disable=SC2016
+    echo '  mise run ses:verify-domain ${DOMAIN_NAME}'
     echo ""
     echo "This script will:"
     echo "  1. Request domain verification"
@@ -95,13 +96,13 @@ echo ""
 DOMAIN_STATUS=$(aws ses get-identity-verification-attributes \
     --identities "$DOMAIN" \
     --region "$REGION" \
-    --output json | \
+    --output json |
     jq -r ".VerificationAttributes[\"$DOMAIN\"].VerificationStatus")
 
 DKIM_STATUS=$(aws ses get-identity-dkim-attributes \
     --identities "$DOMAIN" \
     --region "$REGION" \
-    --output json | \
+    --output json |
     jq -r ".DkimAttributes[\"$DOMAIN\"]")
 
 DKIM_ENABLED=$(echo "$DKIM_STATUS" | jq -r '.DkimEnabled')
@@ -145,7 +146,7 @@ echo ""
 
 # Check TXT record
 TXT_RESULT=$(dig TXT "_amazonses.$DOMAIN" +short 2>/dev/null || echo "")
-if [[ -n "$TXT_RESULT" ]]; then
+if [[ -n $TXT_RESULT ]]; then
     echo -e "${GREEN}✓ TXT record found:${NC} $TXT_RESULT"
 else
     echo -e "${YELLOW}⧗ TXT record not yet propagated${NC}"
@@ -154,7 +155,7 @@ fi
 # Check first DKIM CNAME
 FIRST_TOKEN="${DKIM_TOKENS%% *}"
 CNAME_RESULT=$(dig CNAME "${FIRST_TOKEN}._domainkey.$DOMAIN" +short 2>/dev/null || echo "")
-if [[ -n "$CNAME_RESULT" ]]; then
+if [[ -n $CNAME_RESULT ]]; then
     echo -e "${GREEN}✓ DKIM CNAME record found:${NC} $CNAME_RESULT"
 else
     echo -e "${YELLOW}⧗ DKIM CNAME record not yet propagated${NC}"

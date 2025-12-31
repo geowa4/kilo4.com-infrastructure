@@ -345,7 +345,7 @@ wheels = [
 ]
 
 [[package]]
-name = "kilo4-com"
+name = "kilo4"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

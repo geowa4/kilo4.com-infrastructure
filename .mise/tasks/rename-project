@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+#MISE description="Rename project by replacing all project name references"
+
+set -euo pipefail
+
+# Use mise-provided project root
+PROJECT_ROOT="$MISE_PROJECT_ROOT"
+
+#####################################################################
+# Helper Functions
+#####################################################################
+
+log_info() {
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_warn() {
+    echo "[WARN]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_success() {
+    echo "[OK]    $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+handle_error() {
+    log_error "Script failed at line $1"
+    exit 1
+}
+
+trap 'handle_error $LINENO' ERR
+
+usage() {
+    echo "Usage: mise run rename-project FROM TO DOMAIN"
+    echo ""
+    echo "Renames the project by replacing all project name references."
+    echo ""
+    echo "Parameters:"
+    echo "  FROM    - Current project name (e.g., kilo4)"
+    echo "  TO      - New project name (e.g., newproject)"
+    echo "  DOMAIN  - New domain name (e.g., newproject.io)"
+    echo ""
+    echo "Example:"
+    echo "  mise run rename-project kilo4 newproject newproject.io"
+    echo ""
+    echo "Files modified:"
+    echo "  - mise.toml (PROJECT_NAME and DOMAIN_NAME)"
+    echo "  - README.md (title)"
+    echo "  - pyproject.toml (package name)"
+    echo "  - infrastructure.yaml (description)"
+    echo "  - uv.lock (regenerated)"
+    exit 1
+}
+
+# Show usage if help requested or wrong number of args
+if [ "$#" -ne 3 ]; then
+    if [ "$#" -gt 0 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
+        usage
+    fi
+    log_error "Expected 3 arguments, got $#"
+    usage
+fi
+
+#####################################################################
+# Parse Arguments
+#####################################################################
+
+FROM="$1"
+TO="$2"
+DOMAIN="$3"
+
+# Get current domain and package names
+OLD_DOMAIN=$(grep "^DOMAIN_NAME" "$PROJECT_ROOT/mise.toml" | cut -d'"' -f2)
+OLD_PACKAGE=$(grep "^name = " "$PROJECT_ROOT/pyproject.toml" | cut -d'"' -f2)
+# New package name matches new project name
+NEW_PACKAGE="$TO"
+
+log_info "Renaming project: $FROM -> $TO"
+log_info "Domain: $OLD_DOMAIN -> $DOMAIN"
+log_info "Package: $OLD_PACKAGE -> $NEW_PACKAGE"
+echo ""
+
+#####################################################################
+# File Updates
+#####################################################################
+
+update_mise_toml() {
+    log_info "Updating mise.toml..."
+
+    sed -i.bak \
+        -e "s/^PROJECT_NAME = \"$FROM\"/PROJECT_NAME = \"$TO\"/" \
+        -e "s/^DOMAIN_NAME = \"$OLD_DOMAIN\"/DOMAIN_NAME = \"$DOMAIN\"/" \
+        "$PROJECT_ROOT/mise.toml"
+
+    rm "$PROJECT_ROOT/mise.toml.bak"
+    log_success "Updated mise.toml"
+}
+
+update_readme() {
+    log_info "Updating README.md..."
+
+    sed -i.bak \
+        "s/^# $OLD_DOMAIN Infrastructure/# $DOMAIN Infrastructure/" \
+        "$PROJECT_ROOT/README.md"
+
+    rm "$PROJECT_ROOT/README.md.bak"
+    log_success "Updated README.md"
+}
+
+update_pyproject() {
+    log_info "Updating pyproject.toml..."
+
+    sed -i.bak \
+        "s/^name = \"$OLD_PACKAGE\"/name = \"$NEW_PACKAGE\"/" \
+        "$PROJECT_ROOT/pyproject.toml"
+
+    rm "$PROJECT_ROOT/pyproject.toml.bak"
+    log_success "Updated pyproject.toml"
+}
+
+update_infrastructure() {
+    log_info "Updating infrastructure.yaml..."
+
+    sed -i.bak \
+        "s/infrastructure for $FROM/infrastructure for $TO/" \
+        "$PROJECT_ROOT/infrastructure.yaml"
+
+    rm "$PROJECT_ROOT/infrastructure.yaml.bak"
+    log_success "Updated infrastructure.yaml"
+}
+
+regenerate_lock() {
+    log_info "Regenerating uv.lock..."
+
+    cd "$PROJECT_ROOT"
+    if command -v uv &>/dev/null; then
+        uv lock --quiet
+        log_success "Regenerated uv.lock"
+    else
+        log_warn "uv not found, skipping lock file regeneration"
+        log_warn "Run 'uv lock' manually when uv is available"
+    fi
+}
+
+#####################################################################
+# Main
+#####################################################################
+
+main() {
+    echo "=============================================="
+    echo "  Project Rename"
+    echo "=============================================="
+    echo ""
+
+    update_mise_toml
+    update_readme
+    update_pyproject
+    update_infrastructure
+    regenerate_lock
+
+    echo ""
+    log_success "Project renamed successfully!"
+    echo ""
+    echo "Summary of changes:"
+    echo "  Project name:  $FROM -> $TO"
+    echo "  Domain:        $OLD_DOMAIN -> $DOMAIN"
+    echo "  Package name:  $OLD_PACKAGE -> $NEW_PACKAGE"
+    echo ""
+    echo "Modified files:"
+    echo "  - mise.toml"
+    echo "  - README.md"
+    echo "  - pyproject.toml"
+    echo "  - infrastructure.yaml"
+    echo "  - uv.lock (regenerated)"
+    echo ""
+}
+
+main

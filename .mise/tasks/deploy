@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Master deployment script for kilo4 infrastructure"
+#MISE description="Master deployment script for project infrastructure"
 
 set -euo pipefail
 
@@ -43,7 +43,7 @@ trap 'handle_error $LINENO' ERR
 usage() {
     echo "Usage: mise run deploy"
     echo ""
-    echo "Deploys the complete kilo4 infrastructure:"
+    echo "Deploys the complete infrastructure:"
     echo "  1. CloudFormation stack (VPC, EC2, IAM, S3, SNS)"
     echo "  2. Ansible playbooks upload to S3"
     echo "  3. System hardening via Ansible"
@@ -303,7 +303,7 @@ print_deployment_summary() {
 
 main() {
     echo "=============================================="
-    echo "  kilo4 Infrastructure Deployment"
+    echo "  Infrastructure Deployment"
     echo "=============================================="
     echo ""
     echo "Region: $REGION"

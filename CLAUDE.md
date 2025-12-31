@@ -37,13 +37,13 @@ This task automatically:
 ### Manual update
 ```bash
 aws cloudformation update-stack \
-  --stack-name kilo4-Infrastructure \
+  --stack-name ${PROJECT_NAME}-Infrastructure \
   --template-body file://infrastructure.yaml \
   --parameters ParameterKey=SSHAllowedIP,ParameterValue=<IP>/32 \
   --capabilities CAPABILITY_NAMED_IAM \
   --region us-east-2
 
-aws cloudformation wait stack-update-complete --stack-name kilo4-Infrastructure --region us-east-2
+aws cloudformation wait stack-update-complete --stack-name ${PROJECT_NAME}-Infrastructure --region us-east-2
 ```
 
 ## EC2 Instance Details
@@ -56,7 +56,7 @@ aws cloudformation wait stack-update-complete --stack-name kilo4-Infrastructure 
 ### Get instance public IP
 ```bash
 aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=kilo4-Instance" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:Name,Values=${PROJECT_NAME}-Instance" "Name=instance-state-name,Values=running" \
   --query 'Reservations[0].Instances[0].PublicIpAddress' \
   --output text \
   --region us-east-2
@@ -157,7 +157,7 @@ aws ssm send-command \
 ```bash
 aws ssm create-association \
   --name "AWS-ApplyAnsiblePlaybooks" \
-  --targets "Key=tag:Name,Values=kilo4-Instance" \
+  --targets "Key=tag:Name,Values=${PROJECT_NAME}-Instance" \
   --parameters '{...}' \
   --schedule-expression "rate(1 day)" \
   --region us-east-2
@@ -166,22 +166,22 @@ aws ssm create-association \
 ## Amazon SES Email Service
 
 ### Overview
-- **Sender Domain**: kilo4.com
-- **Sender Address**: noreply@kilo4.com
+- **Sender Domain**: ${DOMAIN_NAME}
+- **Sender Address**: noreply@${DOMAIN_NAME}
 - **Status**: Domain verified with DKIM
 - **Mode**: Sandbox (200 emails/day, verified recipients only)
 
 ### SES Tasks
 ```bash
 # Verify email identity
-mise run ses:verify-identity noreply@kilo4.com
+mise run ses:verify-identity noreply@${DOMAIN_NAME}
 
 # Verify domain with DKIM
-mise run ses:verify-domain kilo4.com
+mise run ses:verify-domain ${DOMAIN_NAME}
 
 # Send test email
 mise run ses:test-email -- \
-  --from noreply@kilo4.com \
+  --from noreply@${DOMAIN_NAME} \
   --to recipient@example.com \
   --subject "Test" \
   --body "Test email"
