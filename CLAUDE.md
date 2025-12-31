@@ -11,7 +11,7 @@ This repository contains AWS infrastructure-as-code for deploying a VPC, EC2 ins
 **Infrastructure Model**: Single CloudFormation template (`infrastructure.yaml`) that defines:
 - VPC with public subnet and internet gateway
 - EC2 instance (t4g.small ARM-based) with IAM role for SSM, SES, and S3 backup access
-- Security group restricting SSH to a single parameterized IP
+- Security group with egress-only rules (no inbound ports, access via SSM)
 - SSH key provisioning from GitHub (https://github.com/geowa4.keys) via UserData
 - S3 buckets for Ansible playbooks and backups (versioned, KMS-encrypted)
 - SNS topics for SES bounce/complaint notifications
@@ -29,7 +29,6 @@ mise run infra:update-stack
 ```
 
 This task automatically:
-- Fetches your current public IP
 - Validates the template
 - Updates the stack
 - Waits for completion
@@ -40,7 +39,7 @@ This task automatically:
 aws cloudformation update-stack \
   --stack-name ${PROJECT_NAME}-Infrastructure \
   --template-body file://infrastructure.yaml \
-  --parameters ParameterKey=SSHAllowedIP,ParameterValue=<IP>/32 \
+  --parameters ParameterKey=ProjectName,ParameterValue=${PROJECT_NAME} \
   --capabilities CAPABILITY_NAMED_IAM \
   --region us-east-2
 
@@ -51,16 +50,54 @@ aws cloudformation wait stack-update-complete --stack-name ${PROJECT_NAME}-Infra
 
 - **Instance Type**: t4g.small (ARM-based Graviton)
 - **AMI**: Dynamically resolved via SSM parameter `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`
-- **SSH Access**: GitHub user `geowa4`'s public keys are automatically provisioned
+- **Access**: Via AWS Systems Manager Session Manager (no SSH port 22 exposed)
+- **SSH Keys**: GitHub user `geowa4`'s public keys are automatically provisioned for SSH-over-SSM
 - **IAM Role**: Includes `AmazonSSMManagedInstanceCore`, SES sending permissions, and S3 backup bucket access
 
-### Get instance public IP
+### Get instance ID
 ```bash
-aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=${PROJECT_NAME}-Instance" "Name=instance-state-name,Values=running" \
-  --query 'Reservations[0].Instances[0].PublicIpAddress' \
-  --output text \
-  --region us-east-2
+aws cloudformation describe-stacks \
+  --stack-name ${PROJECT_NAME}-Infrastructure \
+  --region us-east-2 \
+  --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+  --output text
+```
+
+## Connecting to EC2 Instances
+
+All instance access is via AWS Systems Manager Session Manager (no inbound SSH port 22). Three connection methods are available:
+
+### SSM Session Manager (recommended)
+```bash
+# Interactive shell via SSM
+mise run infra:ssm-connect
+```
+
+### SSH over SSM
+Requires SSH config (automatically configured in `~/.ssh/config`):
+```bash
+# Get SSH command
+mise run infra:ssh-command
+
+# Connect via SSH over SSM tunnel
+ssh ec2-user@i-<instance-id>
+```
+
+SSH config (`~/.ssh/config`):
+```
+Host i-* mi-*
+    ProxyCommand sh -c "aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
+    User ec2-user
+```
+
+### Port Forwarding
+Forward remote ports (RDS, ElastiCache, etc.) to local machine:
+```bash
+# Forward RDS PostgreSQL to local port 5432
+mise run infra:port-forward 5432 mydb.cluster-xxx.rds.amazonaws.com 5432
+
+# Forward service on EC2 instance
+mise run infra:port-forward 8080 localhost 80
 ```
 
 ## Mise Tasks
@@ -278,7 +315,7 @@ FILES_CONF="/etc/s3-backup/files.conf"
 
 ### Adding New Files to Backup
 
-1. SSH to the instance or use SSM Session Manager
+1. Connect to the instance: `mise run infra:ssm-connect`
 2. Edit `/etc/s3-backup/files.conf` and add the file path
 3. Trigger immediate backup to test: `sudo systemctl start s3-backup.service`
 4. Check logs: `sudo journalctl -u s3-backup.service -n 50`
@@ -296,19 +333,21 @@ aws ssm send-command \
   --parameters "commands=['systemctl status s3-backup.timer']" \
   --region us-east-2
 
-# Via SSH
-ssh ec2-user@<instance-ip> 'sudo systemctl status s3-backup.timer'
+# Via SSM shell
+mise run infra:ssm-connect
+sudo systemctl status s3-backup.timer
 ```
 
 Check recent backup logs:
 ```bash
-ssh ec2-user@<instance-ip> 'sudo journalctl -u s3-backup.service -n 100'
+mise run infra:ssm-connect
+sudo journalctl -u s3-backup.service -n 100
 ```
 
 ## Important Constraints
 
 - **ARM Architecture**: Instance uses t4g (Graviton), so always use ARM64 AMIs and binaries
-- **Security**: SSH restricted to single IP via SSHAllowedIP parameter
-- **No Key Pairs**: SSH keys come exclusively from GitHub (geowa4 user)
+- **Security**: No inbound ports exposed - all access via AWS Systems Manager Session Manager
+- **SSH Keys**: SSH keys come exclusively from GitHub (geowa4 user), used for SSH-over-SSM
 - **SSM Agent**: Pre-installed on Amazon Linux 2023, no manual installation needed
 - **DependsOn**: The PublicRoute resource requires `DependsOn: VPCGatewayAttachment` to ensure proper creation order

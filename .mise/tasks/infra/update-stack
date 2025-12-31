@@ -40,21 +40,8 @@ echo "Region: $REGION"
 echo "========================================"
 echo ""
 
-# Step 1: Fetch current public IP
-echo -e "${YELLOW}Step 1: Fetching current public IP...${NC}"
-
-CURRENT_IP=$(curl -s ipinfo.io/ip)
-
-if [ -z "$CURRENT_IP" ]; then
-    echo -e "${RED}✗ Failed to fetch public IP${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}✓ Current IP: $CURRENT_IP${NC}"
-echo ""
-
-# Step 2: Validate template
-echo -e "${YELLOW}Step 2: Validating CloudFormation template...${NC}"
+# Step 1: Validate template
+echo -e "${YELLOW}Step 1: Validating CloudFormation template...${NC}"
 echo "  Template file: $TEMPLATE_FILE"
 
 if [[ ! -f $TEMPLATE_FILE ]]; then
@@ -77,9 +64,8 @@ fi
 
 echo ""
 
-# Step 3: Update stack
-echo -e "${YELLOW}Step 3: Updating CloudFormation stack...${NC}"
-echo "  SSH Allowed IP: ${CURRENT_IP}/32"
+# Step 2: Update stack
+echo -e "${YELLOW}Step 2: Updating CloudFormation stack...${NC}"
 echo "  Template: $TEMPLATE_FILE"
 echo "  Stack: $STACK_NAME"
 echo "  Region: $REGION"
@@ -92,7 +78,6 @@ UPDATE_RESULT=$(aws cloudformation update-stack \
     --template-body file://"$TEMPLATE_FILE" \
     --parameters \
     ParameterKey=ProjectName,ParameterValue="${PROJECT_NAME}" \
-    ParameterKey=SSHAllowedIP,ParameterValue="${CURRENT_IP}/32" \
     ParameterKey=LatestAmiId,ParameterValue="${AMI_SSM_PARAMETER}" \
     --capabilities CAPABILITY_NAMED_IAM \
     --region "$REGION" 2>&1)
@@ -133,9 +118,9 @@ else
     fi
 fi
 
-# Step 4: Wait for update to complete
+# Step 3: Wait for update to complete
 echo "=================================================="
-echo -e "${YELLOW}Step 4: Waiting for stack update to complete...${NC}"
+echo -e "${YELLOW}Step 3: Waiting for stack update to complete...${NC}"
 echo "(This may take several minutes)"
 echo ""
 
@@ -166,9 +151,9 @@ fi
 
 echo ""
 
-# Step 5: Display stack outputs
+# Step 4: Display stack outputs
 echo "=================================================="
-echo -e "${YELLOW}Step 5: Stack Outputs:${NC}"
+echo -e "${YELLOW}Step 4: Stack Outputs:${NC}"
 echo ""
 
 aws cloudformation describe-stacks \
@@ -181,5 +166,6 @@ echo ""
 echo "=================================================="
 echo -e "${GREEN}Stack update complete!${NC}"
 echo ""
-echo "SSH access is now allowed from: ${CURRENT_IP}/32"
+echo "Connect to instance via SSM:"
+echo "  mise run infra:ssm-connect"
 echo ""

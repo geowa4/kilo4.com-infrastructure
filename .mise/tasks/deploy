@@ -135,23 +135,13 @@ deploy_or_update_stack() {
 }
 
 create_new_stack() {
-    local current_ip
-    current_ip=$(curl -s ipinfo.io/ip)
-
-    if [[ -z $current_ip ]]; then
-        log_error "Failed to fetch public IP"
-        log_error "Please specify IP manually or check internet connection"
-        exit 1
-    fi
-
-    log_info "Creating stack with SSH access from $current_ip/32"
+    log_info "Creating CloudFormation stack..."
 
     aws cloudformation create-stack \
         --stack-name "$STACK_NAME" \
         --template-body file://"$TEMPLATE_FILE" \
         --parameters \
         ParameterKey=ProjectName,ParameterValue="${PROJECT_NAME}" \
-        ParameterKey=SSHAllowedIP,ParameterValue="${current_ip}/32" \
         ParameterKey=LatestAmiId,ParameterValue="${AMI_SSM_PARAMETER}" \
         --capabilities CAPABILITY_NAMED_IAM \
         --region "$REGION"
@@ -275,20 +265,23 @@ print_deployment_summary() {
     echo "=============================================="
     echo ""
 
-    # Get instance public IP
-    local public_ip
-    public_ip=$(aws ec2 describe-instances \
-        --filters "Name=tag:Name,Values=${PROJECT_NAME}-Instance" "Name=instance-state-name,Values=running" \
-        --query 'Reservations[0].Instances[0].PublicIpAddress' \
-        --output text \
-        --region "$REGION" 2>/dev/null || echo "N/A")
+    # Get instance ID
+    local instance_id
+    instance_id=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+        --output text 2>/dev/null || echo "N/A")
 
-    echo "Instance Public IP: $public_ip"
+    echo "Instance ID: $instance_id"
     echo ""
 
-    if [[ $public_ip != "N/A" ]]; then
-        echo "SSH Command:"
-        echo "  ssh ec2-user@$public_ip"
+    if [[ $instance_id != "N/A" ]]; then
+        echo "Connect via SSM Session Manager:"
+        echo "  mise run infra:ssm-connect"
+        echo ""
+        echo "Or via SSH (requires SSH config):"
+        echo "  ssh ec2-user@$instance_id"
         echo ""
     fi
 
@@ -304,21 +297,27 @@ print_deployment_summary() {
     echo "  Next Steps"
     echo "=============================================="
     echo ""
-    echo "1. Verify SSH access:"
-    echo "   ssh ec2-user@$public_ip"
+    echo "1. Connect to instance via SSM:"
+    echo "   mise run infra:ssm-connect"
     echo ""
-    echo "2. Test backup system:"
+    echo "2. Configure SSH for SSM access (if not already done):"
+    echo "   Add to ~/.ssh/config:"
+    echo "   Host i-* mi-*"
+    echo "       ProxyCommand sh -c \"aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'\""
+    echo "       User ec2-user"
+    echo ""
+    echo "3. Test backup system:"
     echo "   mise run infra:backup-run"
     echo "   mise run infra:backup-list-versions fail2ban.sqlite3"
     echo ""
-    echo "3. Configure SES for email sending (optional):"
+    echo "4. Configure SES for email sending (optional):"
     echo "   mise run ses:verify-domain ${DOMAIN_NAME}"
     echo "   See docs/ses-setup.md for details"
     echo ""
-    echo "4. Monitor patch compliance in AWS Console:"
+    echo "5. Monitor patch compliance in AWS Console:"
     echo "   Systems Manager > Patch Manager > Compliance"
     echo ""
-    echo "5. View deployed resources:"
+    echo "6. View deployed resources:"
     echo "   aws cloudformation describe-stack-resources --stack-name $STACK_NAME --region $REGION"
     echo ""
 }

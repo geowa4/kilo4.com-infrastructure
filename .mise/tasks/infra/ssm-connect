@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#MISE description="Connect to EC2 instance via SSM Session Manager"
+
+set -euo pipefail
+
+REGION="us-east-2"
+STACK_NAME="${PROJECT_NAME}-Infrastructure"
+
+#####################################################################
+# Helper Functions
+#####################################################################
+
+log_info() {
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+handle_error() {
+    log_error "Script failed at line $1"
+    exit 1
+}
+
+trap 'handle_error $LINENO' ERR
+
+#####################################################################
+# Main Function
+#####################################################################
+
+main() {
+    # Check AWS credentials
+    if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
+        log_error "AWS credentials not configured or expired"
+        exit 1
+    fi
+
+    # Get instance ID from CloudFormation stack outputs
+    log_info "Retrieving instance ID from CloudFormation stack..."
+
+    local instance_id
+    instance_id=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+        --output text 2>/dev/null)
+
+    if [[ -z $instance_id || $instance_id == "None" ]]; then
+        log_error "Could not retrieve instance ID from stack outputs"
+        log_error "Ensure the CloudFormation stack exists: $STACK_NAME"
+        exit 1
+    fi
+
+    log_info "Connecting to instance: $instance_id"
+    log_info "Starting SSM Session Manager session..."
+    echo "" >&2
+
+    # Start SSM session (this is an interactive command)
+    aws ssm start-session \
+        --target "$instance_id" \
+        --region "$REGION"
+}
+
+main "$@"

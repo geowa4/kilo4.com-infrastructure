@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#MISE description="Print SSH command for connecting to EC2 instance via SSM"
+
+set -euo pipefail
+
+REGION="us-east-2"
+STACK_NAME="${PROJECT_NAME}-Infrastructure"
+
+#####################################################################
+# Helper Functions
+#####################################################################
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+handle_error() {
+    log_error "Script failed at line $1"
+    exit 1
+}
+
+trap 'handle_error $LINENO' ERR
+
+#####################################################################
+# Main Function
+#####################################################################
+
+main() {
+    # Check AWS credentials
+    if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
+        log_error "AWS credentials not configured or expired"
+        exit 1
+    fi
+
+    # Get instance ID from CloudFormation stack outputs
+    local instance_id
+    instance_id=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+        --output text 2>/dev/null)
+
+    if [[ -z $instance_id || $instance_id == "None" ]]; then
+        log_error "Could not retrieve instance ID from stack outputs"
+        log_error "Ensure the CloudFormation stack exists: $STACK_NAME"
+        exit 1
+    fi
+
+    # Output the SSH command to stdout (for eval)
+    echo "ssh ec2-user@$instance_id"
+
+    # Output informational messages to stderr
+    echo "" >&2
+    echo "Note: This requires SSH config with SSM ProxyCommand. Add to ~/.ssh/config:" >&2
+    echo "" >&2
+    echo "Host i-* mi-*" >&2
+    echo "    ProxyCommand sh -c \"aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'\"" >&2
+    echo "    User ec2-user" >&2
+    echo "" >&2
+}
+
+main "$@"

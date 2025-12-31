@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+#MISE description="Forward remote port to local port via SSM Session Manager"
+
+set -euo pipefail
+
+REGION="us-east-2"
+STACK_NAME="${PROJECT_NAME}-Infrastructure"
+
+#####################################################################
+# Helper Functions
+#####################################################################
+
+log_info() {
+    echo "[INFO]  $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $*" >&2
+}
+
+handle_error() {
+    log_error "Script failed at line $1"
+    exit 1
+}
+
+trap 'handle_error $LINENO' ERR
+
+usage() {
+    echo "Usage: mise run infra:port-forward <local-port> <remote-host> <remote-port>" >&2
+    echo "" >&2
+    echo "Forward a remote port through the EC2 instance to a local port via SSM." >&2
+    echo "" >&2
+    echo "Arguments:" >&2
+    echo "  local-port   - Local port to bind to (e.g., 5432)" >&2
+    echo "  remote-host  - Remote host to connect to (e.g., mydb.rds.amazonaws.com or localhost)" >&2
+    echo "  remote-port  - Remote port to forward (e.g., 5432)" >&2
+    echo "" >&2
+    echo "Examples:" >&2
+    echo "  # Forward RDS PostgreSQL to local port 5432" >&2
+    echo "  mise run infra:port-forward 5432 mydb.cluster-xxx.rds.amazonaws.com 5432" >&2
+    echo "" >&2
+    echo "  # Forward service on EC2 instance to local port 8080" >&2
+    echo "  mise run infra:port-forward 8080 localhost 80" >&2
+    echo "" >&2
+    exit 1
+}
+
+#####################################################################
+# Main Function
+#####################################################################
+
+main() {
+    # Check arguments
+    if [ "$#" -ne 3 ]; then
+        log_error "Invalid number of arguments"
+        usage
+    fi
+
+    local local_port="$1"
+    local remote_host="$2"
+    local remote_port="$3"
+
+    # Validate local port is a number
+    if ! [[ "$local_port" =~ ^[0-9]+$ ]]; then
+        log_error "Local port must be a number: $local_port"
+        exit 1
+    fi
+
+    # Validate remote port is a number
+    if ! [[ "$remote_port" =~ ^[0-9]+$ ]]; then
+        log_error "Remote port must be a number: $remote_port"
+        exit 1
+    fi
+
+    # Check AWS credentials
+    if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
+        log_error "AWS credentials not configured or expired"
+        exit 1
+    fi
+
+    # Get instance ID from CloudFormation stack outputs
+    log_info "Retrieving instance ID from CloudFormation stack..."
+
+    local instance_id
+    instance_id=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+        --output text 2>/dev/null)
+
+    if [[ -z $instance_id || $instance_id == "None" ]]; then
+        log_error "Could not retrieve instance ID from stack outputs"
+        log_error "Ensure the CloudFormation stack exists: $STACK_NAME"
+        exit 1
+    fi
+
+    log_info "Starting port forwarding session..."
+    log_info "  Instance: $instance_id"
+    log_info "  Local:    127.0.0.1:$local_port"
+    log_info "  Remote:   $remote_host:$remote_port"
+    echo "" >&2
+
+    # Start port forwarding session
+    aws ssm start-session \
+        --target "$instance_id" \
+        --document-name AWS-StartPortForwardingSessionToRemoteHost \
+        --parameters "{\"host\":[\"$remote_host\"],\"portNumber\":[\"$remote_port\"],\"localPortNumber\":[\"$local_port\"]}" \
+        --region "$REGION"
+}
+
+main "$@"
