@@ -3,19 +3,15 @@
 
 set -euo pipefail
 
-# Parse command line arguments
-# Use environment variable if set, otherwise use command line argument
-EMAIL_ADDRESS="${EMAIL_ADDRESS:-${1:-}}"
-
 # Use mise-provided project root
 PROJECT_ROOT="$MISE_PROJECT_ROOT"
 
 # Configuration Variables
 REGION="us-east-2"
-STACK_NAME="kilo4-Infrastructure"
+STACK_NAME="${PROJECT_NAME}-Infrastructure"
 TEMPLATE_FILE="$PROJECT_ROOT/infrastructure.yaml"
-SSM_WAIT_TIMEOUT=300  # 5 minutes
-SSM_WAIT_INTERVAL=15  # seconds
+SSM_WAIT_TIMEOUT=300 # 5 minutes
+SSM_WAIT_INTERVAL=15 # seconds
 
 #####################################################################
 # Helper Functions
@@ -45,8 +41,7 @@ handle_error() {
 trap 'handle_error $LINENO' ERR
 
 usage() {
-    echo "Usage: mise run deploy [EMAIL_ADDRESS]"
-    echo "       EMAIL_ADDRESS=email@example.com mise run deploy"
+    echo "Usage: mise run deploy"
     echo ""
     echo "Deploys the complete kilo4 infrastructure:"
     echo "  1. CloudFormation stack (VPC, EC2, IAM, S3, SNS)"
@@ -54,15 +49,13 @@ usage() {
     echo "  3. System hardening via Ansible"
     echo "  4. Base packages installation"
     echo "  5. State Manager association for scheduled hardening"
-    echo "  6. Patch Manager configuration (if email provided)"
+    echo "  6. Patch Manager configuration (if EMAIL_ADDRESS is set in mise.toml)"
     echo ""
-    echo "Arguments:"
-    echo "  EMAIL_ADDRESS  Optional email for patch notifications"
-    echo "                 Can be set via environment variable or command line argument"
+    echo "Configuration:"
+    echo "  Set EMAIL_ADDRESS in mise.toml for patch notification emails"
     echo ""
-    echo "Examples:"
-    echo "  mise run deploy admin@kilo4.com"
-    echo "  EMAIL_ADDRESS=admin@kilo4.com mise run deploy"
+    echo "Example:"
+    echo "  mise run deploy"
     exit 1
 }
 
@@ -79,34 +72,34 @@ check_prerequisites() {
     log_info "Checking prerequisites..."
 
     # Check AWS CLI installed
-    if ! command -v aws &> /dev/null; then
+    if ! command -v aws &>/dev/null; then
         log_error "AWS CLI is not installed"
         log_error "Install with: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
         exit 1
     fi
 
     # Check AWS credentials
-    if ! aws sts get-caller-identity --region "$REGION" &> /dev/null; then
+    if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
         log_error "AWS credentials not configured or expired"
         log_error "Configure with: aws configure"
         exit 1
     fi
 
     # Check jq installed (needed for JSON parsing)
-    if ! command -v jq &> /dev/null; then
+    if ! command -v jq &>/dev/null; then
         log_error "jq is not installed"
         log_error "Install with: brew install jq (macOS) or apt-get install jq (Linux)"
         exit 1
     fi
 
     # Check curl installed (for IP detection)
-    if ! command -v curl &> /dev/null; then
+    if ! command -v curl &>/dev/null; then
         log_error "curl is not installed"
         exit 1
     fi
 
     # Check template file exists
-    if [[ ! -f "$TEMPLATE_FILE" ]]; then
+    if [[ ! -f $TEMPLATE_FILE ]]; then
         log_error "CloudFormation template not found: $TEMPLATE_FILE"
         exit 1
     fi
@@ -130,7 +123,7 @@ deploy_or_update_stack() {
         --query "Stacks[0].StackStatus" \
         --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
-    if [[ "$stack_status" == "DOES_NOT_EXIST" ]]; then
+    if [[ $stack_status == "DOES_NOT_EXIST" ]]; then
         log_info "Stack does not exist. Creating new stack..."
         create_new_stack
     else
@@ -144,7 +137,7 @@ create_new_stack() {
     local current_ip
     current_ip=$(curl -s ipinfo.io/ip)
 
-    if [[ -z "$current_ip" ]]; then
+    if [[ -z $current_ip ]]; then
         log_error "Failed to fetch public IP"
         log_error "Please specify IP manually or check internet connection"
         exit 1
@@ -155,7 +148,10 @@ create_new_stack() {
     aws cloudformation create-stack \
         --stack-name "$STACK_NAME" \
         --template-body file://"$TEMPLATE_FILE" \
-        --parameters ParameterKey=SSHAllowedIP,ParameterValue="${current_ip}/32" \
+        --parameters \
+        ParameterKey=ProjectName,ParameterValue="${PROJECT_NAME}" \
+        ParameterKey=SSHAllowedIP,ParameterValue="${current_ip}/32" \
+        ParameterKey=LatestAmiId,ParameterValue="${AMI_SSM_PARAMETER}" \
         --capabilities CAPABILITY_NAMED_IAM \
         --region "$REGION"
 
@@ -177,7 +173,7 @@ wait_for_ssm_agent() {
         --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
         --output text)
 
-    if [[ -z "$instance_id" || "$instance_id" == "None" ]]; then
+    if [[ -z $instance_id || $instance_id == "None" ]]; then
         log_error "Could not retrieve instance ID from stack outputs"
         exit 1
     fi
@@ -191,7 +187,7 @@ wait_for_ssm_agent() {
             --query "InstanceInformationList[0].PingStatus" \
             --output text 2>/dev/null || echo "None")
 
-        if [[ "$ping_status" == "Online" ]]; then
+        if [[ $ping_status == "Online" ]]; then
             log_success "SSM Agent is online for instance $instance_id"
             return 0
         fi
@@ -238,16 +234,14 @@ create_state_manager_association() {
 }
 
 configure_patch_manager() {
-    local email="$1"
-
-    if [[ -z "$email" ]]; then
-        log_warn "Email address not provided. Skipping Patch Manager configuration."
-        log_warn "Run: mise run infra:configure-patch-manager EMAIL later to set up patching."
+    if [[ -z $EMAIL_ADDRESS ]]; then
+        log_warn "EMAIL_ADDRESS not set in mise.toml. Skipping Patch Manager configuration."
+        log_warn "Set EMAIL_ADDRESS in mise.toml and run: mise run infra:configure-patch-manager"
         return 0
     fi
 
     log_info "Configuring Patch Manager..."
-    mise run infra:configure-patch-manager "$email"
+    mise run infra:configure-patch-manager
     log_success "Patch Manager configured"
 }
 
@@ -262,7 +256,7 @@ print_deployment_summary() {
     # Get instance public IP
     local public_ip
     public_ip=$(aws ec2 describe-instances \
-        --filters "Name=tag:Name,Values=kilo4-Instance" "Name=instance-state-name,Values=running" \
+        --filters "Name=tag:Name,Values=${PROJECT_NAME}-Instance" "Name=instance-state-name,Values=running" \
         --query 'Reservations[0].Instances[0].PublicIpAddress' \
         --output text \
         --region "$REGION" 2>/dev/null || echo "N/A")
@@ -270,7 +264,7 @@ print_deployment_summary() {
     echo "Instance Public IP: $public_ip"
     echo ""
 
-    if [[ "$public_ip" != "N/A" ]]; then
+    if [[ $public_ip != "N/A" ]]; then
         echo "SSH Command:"
         echo "  ssh ec2-user@$public_ip"
         echo ""
@@ -292,7 +286,7 @@ print_deployment_summary() {
     echo "   ssh ec2-user@$public_ip"
     echo ""
     echo "2. Configure SES for email sending (optional):"
-    echo "   mise run ses:verify-domain kilo4.com"
+    echo "   mise run ses:verify-domain ${DOMAIN_NAME}"
     echo "   See docs/ses-setup.md for details"
     echo ""
     echo "3. Monitor patch compliance in AWS Console:"
@@ -323,7 +317,7 @@ main() {
     run_hardening_playbook
     run_base_packages_playbook
     create_state_manager_association
-    configure_patch_manager "$EMAIL_ADDRESS"
+    configure_patch_manager
     print_deployment_summary
 }
 

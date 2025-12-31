@@ -95,14 +95,14 @@ def main():
 Examples:
   # Send a simple test email
   mise run ses:test-email -- \\
-      --from noreply@kilo4.com \\
+      --from noreply@${DOMAIN_NAME} \\
       --to recipient@example.com \\
       --subject "Test Email" \\
       --body "This is a test email from Amazon SES"
 
   # Send HTML email
   mise run ses:test-email -- \\
-      --from noreply@kilo4.com \\
+      --from noreply@${DOMAIN_NAME} \\
       --to recipient@example.com \\
       --subject "Test HTML Email" \\
       --body "This is the plain text version" \\

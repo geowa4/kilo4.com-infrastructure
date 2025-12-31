@@ -3,21 +3,18 @@
 
 set -euo pipefail
 
-# Parse command line arguments
-EMAIL_ADDRESS="${1:-}"
-
 # Configuration Variables
 REGION="us-east-2"
-BASELINE_NAME="kilo4-AmazonLinux2023-Security-Baseline"
-MAINTENANCE_WINDOW_NAME="kilo4-PatchWindow-Sunday"
+BASELINE_NAME="${PROJECT_NAME}-AmazonLinux2023-Security-Baseline"
+MAINTENANCE_WINDOW_NAME="${PROJECT_NAME}-PatchWindow-Sunday"
 PATCH_GROUP_TAG="AmazonLinux2023"
-SNS_TOPIC_NAME="kilo4-patch-notifications"
-SNS_ROLE_NAME="kilo4-SSM-SNS-NotificationRole"
+SNS_TOPIC_NAME="${PROJECT_NAME}-patch-notifications"
+SNS_ROLE_NAME="${PROJECT_NAME}-SSM-SNS-NotificationRole"
 
 # Maintenance Window Schedule
-MW_SCHEDULE="cron(0 2 ? * SUN *)"  # Sundays at 2 AM UTC
-MW_DURATION=4                       # 4 hours
-MW_CUTOFF=1                         # Stop new tasks 1 hour before end
+MW_SCHEDULE="cron(0 2 ? * SUN *)" # Sundays at 2 AM UTC
+MW_DURATION=4                     # 4 hours
+MW_CUTOFF=1                       # Stop new tasks 1 hour before end
 
 # Patch Baseline Configuration
 CLASSIFICATIONS="Security,Bugfix"
@@ -66,18 +63,19 @@ trap 'handle_error $LINENO' ERR
 check_prerequisites() {
     log_info "Checking prerequisites..."
 
-    if [[ -z "$EMAIL_ADDRESS" ]]; then
+    if [[ -z $EMAIL_ADDRESS ]]; then
         log_error "Email address is required"
-        log_error "Usage: mise run infra:configure-patch-manager EMAIL_ADDRESS"
+        log_error "Set EMAIL_ADDRESS in mise.toml or as an environment variable"
+        log_error "Usage: mise run infra:configure-patch-manager"
         exit 1
     fi
 
-    if ! command -v aws &> /dev/null; then
+    if ! command -v aws &>/dev/null; then
         log_error "AWS CLI is not installed"
         exit 1
     fi
 
-    if ! aws sts get-caller-identity --region "$REGION" &> /dev/null; then
+    if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
         log_error "AWS credentials not configured or expired"
         exit 1
     fi
@@ -98,7 +96,7 @@ verify_ssm_agent() {
         --query 'length(InstanceInformationList)' \
         --output text)
 
-    if [[ "$instance_count" -eq 0 ]]; then
+    if [[ $instance_count -eq 0 ]]; then
         log_error "No instances found in SSM Fleet Manager"
         log_error "Ensure the EC2 instance is running and SSM Agent is active"
         exit 1
@@ -137,7 +135,7 @@ create_sns_topic() {
         --topic-arn "$SNS_TOPIC_ARN" \
         --protocol email \
         --notification-endpoint "$EMAIL_ADDRESS" \
-        --region "$REGION" > /dev/null
+        --region "$REGION" >/dev/null
     log_success "Subscription request sent to $EMAIL_ADDRESS"
     log_info "Check your email and confirm the subscription to receive notifications"
 }
@@ -150,7 +148,7 @@ create_sns_notification_role() {
     log_info "Creating/verifying IAM role for SNS notifications: $SNS_ROLE_NAME"
 
     # Check if role exists
-    if aws iam get-role --role-name "$SNS_ROLE_NAME" &> /dev/null; then
+    if aws iam get-role --role-name "$SNS_ROLE_NAME" &>/dev/null; then
         log_info "IAM role $SNS_ROLE_NAME already exists"
         SNS_ROLE_ARN=$(aws iam get-role \
             --role-name "$SNS_ROLE_NAME" \
@@ -161,7 +159,8 @@ create_sns_notification_role() {
 
         # Trust policy for SSM
         local trust_policy
-        trust_policy=$(cat <<'EOF'
+        trust_policy=$(
+            cat <<'EOF'
 {
     "Version": "2012-10-17",
     "Statement": [{
@@ -171,7 +170,7 @@ create_sns_notification_role() {
     }]
 }
 EOF
-)
+        )
 
         SNS_ROLE_ARN=$(aws iam create-role \
             --role-name "$SNS_ROLE_NAME" \
@@ -182,7 +181,8 @@ EOF
 
         # Attach SNS publish policy
         local sns_policy
-        sns_policy=$(cat <<EOF
+        sns_policy=$(
+            cat <<EOF
 {
     "Version": "2012-10-17",
     "Statement": [{
@@ -192,7 +192,7 @@ EOF
     }]
 }
 EOF
-)
+        )
 
         aws iam put-role-policy \
             --role-name "$SNS_ROLE_NAME" \
@@ -221,7 +221,7 @@ create_patch_baseline() {
         --query "BaselineIdentities[?BaselineName=='$BASELINE_NAME'].BaselineId | [0]" \
         --output text)
 
-    if [[ "$existing_baseline_id" != "None" && -n "$existing_baseline_id" ]]; then
+    if [[ $existing_baseline_id != "None" && -n $existing_baseline_id ]]; then
         BASELINE_ID="$existing_baseline_id"
         log_info "Patch baseline already exists with ID: $BASELINE_ID"
     else
@@ -230,7 +230,7 @@ create_patch_baseline() {
         BASELINE_ID=$(aws ssm create-patch-baseline \
             --name "$BASELINE_NAME" \
             --operating-system "AMAZON_LINUX_2023" \
-            --description "Security and bugfix patches for Amazon Linux 2023 - kilo4 infrastructure" \
+            --description "Security and bugfix patches for Amazon Linux 2023 - ${PROJECT_NAME} infrastructure" \
             --approval-rules "PatchRules=[{PatchFilterGroup={PatchFilters=[{Key=CLASSIFICATION,Values=[$CLASSIFICATIONS]},{Key=SEVERITY,Values=[$SEVERITIES]}]},ApproveAfterDays=$APPROVE_AFTER_DAYS}]" \
             --region "$REGION" \
             --query 'BaselineId' \
@@ -244,7 +244,7 @@ create_patch_baseline() {
     aws ssm register-patch-baseline-for-patch-group \
         --baseline-id "$BASELINE_ID" \
         --patch-group "$PATCH_GROUP_TAG" \
-        --region "$REGION" 2>/dev/null || true  # Ignore error if already registered
+        --region "$REGION" 2>/dev/null || true # Ignore error if already registered
 
     log_success "Patch baseline configured: $BASELINE_ID"
 }
@@ -264,7 +264,7 @@ create_maintenance_window() {
         --query "WindowIdentities[0].WindowId" \
         --output text)
 
-    if [[ "$existing_window_id" != "None" && -n "$existing_window_id" ]]; then
+    if [[ $existing_window_id != "None" && -n $existing_window_id ]]; then
         WINDOW_ID="$existing_window_id"
         log_info "Maintenance window already exists with ID: $WINDOW_ID"
     else
@@ -272,7 +272,7 @@ create_maintenance_window() {
 
         WINDOW_ID=$(aws ssm create-maintenance-window \
             --name "$MAINTENANCE_WINDOW_NAME" \
-            --description "Weekly patching window for kilo4 instances - Sundays 2 AM UTC" \
+            --description "Weekly patching window for ${PROJECT_NAME} instances - Sundays 2 AM UTC" \
             --schedule "$MW_SCHEDULE" \
             --schedule-timezone "UTC" \
             --duration "$MW_DURATION" \
@@ -303,7 +303,7 @@ register_maintenance_window_target() {
         --query "Targets[?contains(Targets[].Values[], '$PATCH_GROUP_TAG')].WindowTargetId | [0]" \
         --output text)
 
-    if [[ "$existing_target_id" != "None" && -n "$existing_target_id" ]]; then
+    if [[ $existing_target_id != "None" && -n $existing_target_id ]]; then
         TARGET_ID="$existing_target_id"
         log_info "Target already registered with ID: $TARGET_ID"
     else
@@ -313,7 +313,7 @@ register_maintenance_window_target() {
             --window-id "$WINDOW_ID" \
             --resource-type "INSTANCE" \
             --targets "Key=tag:Patch Group,Values=$PATCH_GROUP_TAG" \
-            --name "kilo4-PatchGroup-Target" \
+            --name "${PROJECT_NAME}-PatchGroup-Target" \
             --description "Instances tagged with Patch Group: $PATCH_GROUP_TAG" \
             --region "$REGION" \
             --query 'WindowTargetId' \
@@ -341,7 +341,7 @@ register_patch_task() {
         --query "Tasks[0].WindowTaskId" \
         --output text)
 
-    if [[ "$existing_task_id" != "None" && -n "$existing_task_id" ]]; then
+    if [[ $existing_task_id != "None" && -n $existing_task_id ]]; then
         TASK_ID="$existing_task_id"
         log_info "Patch task already registered with ID: $TASK_ID"
     else
@@ -352,7 +352,7 @@ register_patch_task() {
             --task-arn "AWS-RunPatchBaseline" \
             --task-type "RUN_COMMAND" \
             --targets "Key=WindowTargetIds,Values=$TARGET_ID" \
-            --name "kilo4-RunPatchBaseline" \
+            --name "${PROJECT_NAME}-RunPatchBaseline" \
             --priority 1 \
             --max-concurrency "1" \
             --max-errors "0" \
@@ -437,7 +437,7 @@ print_verification_summary() {
 
 main() {
     echo ""
-    log_info "Starting Patch Manager configuration for kilo4 infrastructure"
+    log_info "Starting Patch Manager configuration for ${PROJECT_NAME} infrastructure"
     echo ""
 
     check_prerequisites

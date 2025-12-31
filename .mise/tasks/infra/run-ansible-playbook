@@ -9,8 +9,8 @@ INSTANCE_ID="${2:-}"
 
 # Configuration Variables
 REGION="us-east-2"
-STACK_NAME="kilo4-Infrastructure"
-TARGET_TAG="Name=kilo4-Instance"
+STACK_NAME="${PROJECT_NAME}-Infrastructure"
+TARGET_TAG="Name=${PROJECT_NAME}-Instance"
 TIMEOUT_SECONDS=600
 
 #####################################################################
@@ -47,24 +47,24 @@ trap 'handle_error $LINENO' ERR
 check_prerequisites() {
     log_info "Checking prerequisites..."
 
-    if [[ -z "$PLAYBOOK_PATH" ]]; then
+    if [[ -z $PLAYBOOK_PATH ]]; then
         log_error "Playbook path is required"
         log_error "Usage: mise run infra:run-ansible-playbook PLAYBOOK_PATH [INSTANCE_ID]"
         log_error "Example: mise run infra:run-ansible-playbook playbooks/hardening.yml"
         exit 1
     fi
 
-    if [[ ! -f "$PLAYBOOK_PATH" ]]; then
+    if [[ ! -f $PLAYBOOK_PATH ]]; then
         log_error "Playbook file not found: $PLAYBOOK_PATH"
         exit 1
     fi
 
-    if ! command -v aws &> /dev/null; then
+    if ! command -v aws &>/dev/null; then
         log_error "AWS CLI is not installed"
         exit 1
     fi
 
-    if ! aws sts get-caller-identity --region "$REGION" &> /dev/null; then
+    if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
         log_error "AWS credentials not configured or expired"
         exit 1
     fi
@@ -86,7 +86,7 @@ get_bucket_name() {
         --query "Stacks[0].Outputs[?OutputKey=='AnsiblePlaybooksBucketName'].OutputValue" \
         --output text 2>/dev/null)
 
-    if [[ -z "$bucket_name" || "$bucket_name" == "None" ]]; then
+    if [[ -z $bucket_name || $bucket_name == "None" ]]; then
         log_error "Could not retrieve bucket name from stack outputs"
         exit 1
     fi
@@ -95,7 +95,7 @@ get_bucket_name() {
 }
 
 get_instance_id() {
-    if [[ -n "$INSTANCE_ID" ]]; then
+    if [[ -n $INSTANCE_ID ]]; then
         echo "$INSTANCE_ID"
         return
     fi
@@ -109,7 +109,7 @@ get_instance_id() {
         --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
         --output text 2>/dev/null)
 
-    if [[ -z "$instance_id" || "$instance_id" == "None" ]]; then
+    if [[ -z $instance_id || $instance_id == "None" ]]; then
         log_error "Could not retrieve instance ID from stack outputs"
         exit 1
     fi
@@ -235,7 +235,7 @@ display_output() {
     echo "Status: $status" >&2
     echo "" >&2
 
-    if [[ "$status" == "Success" ]]; then
+    if [[ $status == "Success" ]]; then
         log_success "Playbook execution succeeded"
     else
         log_error "Playbook execution status: $status"
@@ -257,7 +257,7 @@ display_output() {
     echo "" >&2
 
     # Return exit code based on status
-    if [[ "$status" != "Success" ]]; then
+    if [[ $status != "Success" ]]; then
         exit 1
     fi
 }

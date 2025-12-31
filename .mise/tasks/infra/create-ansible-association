@@ -8,8 +8,8 @@ PLAYBOOK_NAME="${1:-}"
 
 # Configuration Variables
 REGION="us-east-2"
-STACK_NAME="kilo4-Infrastructure"
-TARGET_TAG="Name=kilo4-Instance"
+STACK_NAME="${PROJECT_NAME}-Infrastructure"
+TARGET_TAG="Name=${PROJECT_NAME}-Instance"
 SCHEDULE="rate(1 day)"
 
 #####################################################################
@@ -46,19 +46,19 @@ trap 'handle_error $LINENO' ERR
 check_prerequisites() {
     log_info "Checking prerequisites..."
 
-    if [[ -z "$PLAYBOOK_NAME" ]]; then
+    if [[ -z $PLAYBOOK_NAME ]]; then
         log_error "Playbook name is required"
         log_error "Usage: mise run infra:create-ansible-association PLAYBOOK_NAME"
         log_error "Example: mise run infra:create-ansible-association hardening.yml"
         exit 1
     fi
 
-    if ! command -v aws &> /dev/null; then
+    if ! command -v aws &>/dev/null; then
         log_error "AWS CLI is not installed"
         exit 1
     fi
 
-    if ! aws sts get-caller-identity --region "$REGION" &> /dev/null; then
+    if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
         log_error "AWS credentials not configured or expired"
         exit 1
     fi
@@ -80,7 +80,7 @@ get_bucket_name() {
         --query "Stacks[0].Outputs[?OutputKey=='AnsiblePlaybooksBucketName'].OutputValue" \
         --output text 2>/dev/null)
 
-    if [[ -z "$bucket_name" || "$bucket_name" == "None" ]]; then
+    if [[ -z $bucket_name || $bucket_name == "None" ]]; then
         log_error "Could not retrieve bucket name from stack outputs"
         exit 1
     fi
@@ -97,7 +97,7 @@ generate_association_name() {
     local basename
     basename=$(basename "$playbook" .yml)
     basename=$(basename "$basename" .yaml)
-    echo "kilo4-${basename}-Playbook"
+    echo "${PROJECT_NAME}-${basename}-Playbook"
 }
 
 #####################################################################
@@ -116,7 +116,7 @@ check_existing_association() {
         --query "Associations[0].AssociationId" \
         --output text 2>/dev/null)
 
-    if [[ -n "$existing_id" && "$existing_id" != "None" ]]; then
+    if [[ -n $existing_id && $existing_id != "None" ]]; then
         log_warn "Association already exists with ID: $existing_id"
         return 0
     fi
@@ -140,7 +140,7 @@ create_association() {
     local association_id
     association_id=$(aws ssm create-association \
         --name "AWS-ApplyAnsiblePlaybooks" \
-        --targets "Key=tag:Name,Values=kilo4-Instance" \
+        --targets "Key=tag:Name,Values=${PROJECT_NAME}-Instance" \
         --parameters '{
             "SourceType": ["S3"],
             "SourceInfo": ["{\"path\":\"https://s3.amazonaws.com/'"$bucket_name"'/playbooks/\"}"],
@@ -192,7 +192,7 @@ verify_association() {
     echo "=============================================="
     echo ""
 
-    if [[ "$status" == "Pending" || "$status" == "Success" ]]; then
+    if [[ $status == "Pending" || $status == "Success" ]]; then
         log_success "Association is active and will run on schedule"
     else
         log_warn "Association status: $status"
@@ -208,8 +208,9 @@ display_next_execution() {
 
     log_info "Checking next execution time..."
 
-    local next_execution
-    next_execution=$(aws ssm describe-association \
+    # Query association status (currently not displayed but kept for future use)
+    local _next_execution
+    _next_execution=$(aws ssm describe-association \
         --name "AWS-ApplyAnsiblePlaybooks" \
         --association-id "$(aws ssm list-associations \
             --association-filter-list "key=Name,value=$association_name" \

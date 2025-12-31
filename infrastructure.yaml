@@ -2,6 +2,10 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: 'VPC and networking infrastructure for kilo4 - foundational networking layer with public subnet and internet connectivity in us-east-2'
 
 Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name prefix for all resources
+
   SSHAllowedIP:
     Type: String
     Description: IP address in CIDR notation allowed to SSH to the instance (e.g., 1.2.3.4/32)
@@ -11,7 +15,6 @@ Parameters:
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Description: SSM Parameter for latest Amazon Linux 2023 ARM64 AMI
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
 
 Resources:
   VPC:
@@ -22,14 +25,14 @@ Resources:
       EnableDnsHostnames: true
       Tags:
         - Key: Name
-          Value: kilo4-VPC
+          Value: !Sub "${ProjectName}-VPC"
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
       Tags:
         - Key: Name
-          Value: kilo4-IGW
+          Value: !Sub "${ProjectName}-IGW"
 
   VPCGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -46,7 +49,7 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: kilo4-PublicSubnet
+          Value: !Sub "${ProjectName}-PublicSubnet"
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -54,7 +57,7 @@ Resources:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: kilo4-PublicRouteTable
+          Value: !Sub "${ProjectName}-PublicRouteTable"
 
   PublicRoute:
     Type: AWS::EC2::Route
@@ -73,17 +76,17 @@ Resources:
   AnsiblePlaybooksBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub 'kilo4-ansible-playbooks-${AWS::AccountId}'
+      BucketName: !Sub '${ProjectName}-ansible-playbooks-${AWS::AccountId}'
       VersioningConfiguration:
         Status: Enabled
       Tags:
         - Key: Name
-          Value: kilo4-ansible-playbooks
+          Value: !Sub "${ProjectName}-ansible-playbooks"
 
   EC2Role:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: kilo4-EC2-SSM-SES-Role
+      RoleName: !Sub "${ProjectName}-EC2-SSM-SES-Role"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -117,12 +120,12 @@ Resources:
                   - !Sub '${AnsiblePlaybooksBucket.Arn}/*'
       Tags:
         - Key: Name
-          Value: kilo4-EC2-SSM-SES-Role
+          Value: !Sub "${ProjectName}-EC2-SSM-SES-Role"
 
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
-      InstanceProfileName: kilo4-EC2-InstanceProfile
+      InstanceProfileName: !Sub "${ProjectName}-EC2-InstanceProfile"
       Roles:
         - !Ref EC2Role
 
@@ -141,7 +144,7 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: kilo4-SSH-SecurityGroup
+          Value: !Sub "${ProjectName}-SSH-SecurityGroup"
 
   EC2Instance:
     Type: AWS::EC2::Instance
@@ -162,32 +165,32 @@ Resources:
           chmod 600 /home/ec2-user/.ssh/authorized_keys
       Tags:
         - Key: Name
-          Value: kilo4-Instance
+          Value: !Sub "${ProjectName}-Instance"
         - Key: Patch Group
           Value: AmazonLinux2023
 
   SESBouncesTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: kilo4-ses-bounces
+      TopicName: !Sub "${ProjectName}-ses-bounces"
       DisplayName: SES Bounce Notifications
       Tags:
         - Key: Name
-          Value: kilo4-ses-bounces
+          Value: !Sub "${ProjectName}-ses-bounces"
 
   SESComplaintsTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: kilo4-ses-complaints
+      TopicName: !Sub "${ProjectName}-ses-complaints"
       DisplayName: SES Complaint Notifications
       Tags:
         - Key: Name
-          Value: kilo4-ses-complaints
+          Value: !Sub "${ProjectName}-ses-complaints"
 
   SESHighBounceRateAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: kilo4-ses-high-bounce-rate
+      AlarmName: !Sub "${ProjectName}-ses-high-bounce-rate"
       AlarmDescription: Alert when SES bounce rate exceeds 5%
       MetricName: Reputation.BounceRate
       Namespace: AWS/SES
@@ -201,7 +204,7 @@ Resources:
   SESHighComplaintRateAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: kilo4-ses-high-complaint-rate
+      AlarmName: !Sub "${ProjectName}-ses-high-complaint-rate"
       AlarmDescription: Alert when SES complaint rate exceeds 0.1%
       MetricName: Reputation.ComplaintRate
       Namespace: AWS/SES
@@ -213,6 +216,9 @@ Resources:
       TreatMissingData: notBreaching
 
 Outputs:
+  ProjectName:
+    Value: !Ref ProjectName
+    Description: Project name prefix used for all resources
   AnsiblePlaybooksBucketName:
     Value: !Ref AnsiblePlaybooksBucket
     Description: S3 bucket name for Ansible playbooks

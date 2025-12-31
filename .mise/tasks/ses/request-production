@@ -9,30 +9,29 @@ REGION="us-east-2"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Default values
-WEBSITE_URL="https://kilo4.com"
-CONTACT_EMAIL="noreply@kilo4.com"
+WEBSITE_URL="https://${DOMAIN_NAME}"
+CONTACT_EMAIL="noreply@${DOMAIN_NAME}"
 USE_CASE=""
 
 usage() {
-    echo "Usage: mise run ses:request-production -- --use-case \"description\" [options]"
+    echo 'Usage: mise run ses:request-production -- --use-case "description" [options]'
     echo ""
     echo "Required:"
     echo "  --use-case DESCRIPTION    Detailed description of your email use case"
     echo ""
     echo "Optional:"
-    echo "  --website-url URL         Website URL (default: https://kilo4.com)"
-    echo "  --contact-email EMAIL     Additional contact email (default: noreply@kilo4.com)"
+    echo "  --website-url URL         Website URL (default: https://${DOMAIN_NAME})"
+    echo "  --contact-email EMAIL     Additional contact email (default: noreply@${DOMAIN_NAME})"
     echo ""
     echo "Example:"
-    echo "  mise run ses:request-production -- --use-case \"Transactional emails for user notifications\""
+    echo '  mise run ses:request-production -- --use-case "Transactional emails for user notifications"'
     echo ""
-    echo "  mise run ses:request-production -- --use-case \"Send password reset emails\" \\"
-    echo "     --website-url https://kilo4.com \\"
-    echo "     --contact-email admin@kilo4.com"
+    printf '  mise run ses:request-production -- --use-case "Send password reset emails" \\\n'
+    echo "     --website-url https://${DOMAIN_NAME} \\"
+    echo "     --contact-email admin@${DOMAIN_NAME}"
     echo ""
     echo "This script will:"
     echo "  1. Submit production access request to AWS"
@@ -50,26 +49,26 @@ usage() {
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --use-case)
-            USE_CASE="$2"
-            shift 2
-            ;;
-        --website-url)
-            WEBSITE_URL="$2"
-            shift 2
-            ;;
-        --contact-email)
-            CONTACT_EMAIL="$2"
-            shift 2
-            ;;
-        -h|--help)
-            usage
-            ;;
-        *)
-            echo -e "${RED}Error: Unknown option $1${NC}"
-            echo ""
-            usage
-            ;;
+    --use-case)
+        USE_CASE="$2"
+        shift 2
+        ;;
+    --website-url)
+        WEBSITE_URL="$2"
+        shift 2
+        ;;
+    --contact-email)
+        CONTACT_EMAIL="$2"
+        shift 2
+        ;;
+    -h | --help)
+        usage
+        ;;
+    *)
+        echo -e "${RED}Error: Unknown option $1${NC}"
+        echo ""
+        usage
+        ;;
     esac
 done
 
@@ -120,11 +119,11 @@ echo -e "${YELLOW}Step 2: Verifying prerequisites...${NC}"
 echo ""
 
 # Check domain verification
-DOMAIN="kilo4.com"
+DOMAIN="${DOMAIN_NAME}"
 DOMAIN_STATUS=$(aws ses get-identity-verification-attributes \
     --identities "$DOMAIN" \
     --region "$REGION" \
-    --output json 2>/dev/null | \
+    --output json 2>/dev/null |
     jq -r ".VerificationAttributes[\"$DOMAIN\"].VerificationStatus // \"Unknown\"")
 
 if [ "$DOMAIN_STATUS" = "Success" ]; then
@@ -141,7 +140,7 @@ fi
 DKIM_STATUS=$(aws ses get-identity-dkim-attributes \
     --identities "$DOMAIN" \
     --region "$REGION" \
-    --output json 2>/dev/null | \
+    --output json 2>/dev/null |
     jq -r ".DkimAttributes[\"$DOMAIN\"].DkimVerificationStatus // \"Unknown\"")
 
 if [ "$DKIM_STATUS" = "Success" ]; then
