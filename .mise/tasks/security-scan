@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+#MISE description="Run security scans (secrets, dependencies, linting)"
+#MISE depends=["validate:cloudformation", "validate:playbooks", "validate:shell"]
+set -euo pipefail
+
+echo "=== Security Scan ===" >&2
+
+# 1. Secret scanning with trufflehog
+echo "" >&2
+echo "Running trufflehog secret scan..." >&2
+if ! trufflehog git file://. --only-verified 2>&1; then
+    echo "WARNING: trufflehog found potential secrets" >&2
+fi
+
+# 2. Python dependency audit
+echo "" >&2
+echo "Running pip-audit dependency scan..." >&2
+if ! uv run pip-audit 2>&1; then
+    echo "WARNING: pip-audit found vulnerable dependencies" >&2
+fi
+
+# 3. Summary
+echo "" >&2
+echo "=== Security Scan Complete ===" >&2
+echo "Review any warnings above before publishing." >&2

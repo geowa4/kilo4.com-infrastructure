@@ -9,6 +9,7 @@ fi
 
 echo "CloudFormation template changes detected, running validation..." >&2
 
+# AWS CloudFormation validate-template
 if ! aws cloudformation validate-template \
     --template-body file://infrastructure.yaml \
     --region us-east-2 2>&1; then
@@ -18,3 +19,13 @@ if ! aws cloudformation validate-template \
 fi
 
 echo "CloudFormation template validation passed" >&2
+
+# Run cfn-lint for additional checks
+echo "Running cfn-lint..." >&2
+if ! uv run cfn-lint infrastructure.yaml 2>&1; then
+    echo "" >&2
+    echo "cfn-lint failed - please fix the errors above." >&2
+    exit 2
+fi
+
+echo "cfn-lint validation passed" >&2

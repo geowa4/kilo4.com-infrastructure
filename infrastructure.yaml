@@ -6,6 +6,10 @@ Parameters:
     Type: String
     Description: Project name prefix for all resources
 
+  GitHubUsername:
+    Type: String
+    Description: GitHub username for SSH key provisioning (keys fetched from https://github.com/<username>.keys)
+
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Description: SSM Parameter for latest Amazon Linux 2023 ARM64 AMI
@@ -39,7 +43,7 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.1.0/24
-      AvailabilityZone: us-east-2a
+      AvailabilityZone: !Select [0, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
@@ -73,6 +77,17 @@ Resources:
       BucketName: !Sub '${ProjectName}-ansible-playbooks-${AWS::AccountId}'
       VersioningConfiguration:
         Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: alias/aws/s3
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-ansible-playbooks"
@@ -80,6 +95,7 @@ Resources:
   BackupBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !Sub '${ProjectName}-backups-${AWS::AccountId}'
       VersioningConfiguration:
@@ -138,7 +154,7 @@ Resources:
                   - ses:SendEmail
                   - ses:SendRawEmail
                   - ses:GetSendQuota
-                Resource: arn:aws:ses:us-east-2:*:identity/*
+                Resource: !Sub 'arn:aws:ses:us-east-2:${AWS::AccountId}:identity/*'
         - PolicyName: S3PlaybookAccessPolicy
           PolicyDocument:
             Version: '2012-10-17'
@@ -174,7 +190,7 @@ Resources:
                 Resource: !Sub 'arn:aws:kms:us-east-2:${AWS::AccountId}:alias/aws/s3'
                 Condition:
                   StringEquals:
-                    kms:ViaService: !Sub 's3.us-east-2.amazonaws.com'
+                    kms:ViaService: s3.us-east-2.amazonaws.com
       Tags:
         - Key: Name
           Value: !Sub "${ProjectName}-EC2-SSM-SES-Role"
@@ -227,7 +243,7 @@ Resources:
               - ssm:TerminateSession
               - ssm:ResumeSession
             Resource:
-              - !Sub arn:aws:ssm:*:*:session/${!aws:userid}-*
+              - 'arn:aws:ssm:*:*:session/${aws:userid}-*'
           - Effect: Allow
             Action:
               - ssm:DescribeSessions
@@ -260,10 +276,10 @@ Resources:
         - !Ref InstanceSecurityGroup
       IamInstanceProfile: !Ref EC2InstanceProfile
       UserData:
-        Fn::Base64: |
+        Fn::Base64: !Sub |
           #!/bin/bash
           mkdir -p /home/ec2-user/.ssh
-          curl -s https://github.com/geowa4.keys >> /home/ec2-user/.ssh/authorized_keys
+          curl -s https://github.com/${GitHubUsername}.keys >> /home/ec2-user/.ssh/authorized_keys
           chown -R ec2-user:ec2-user /home/ec2-user/.ssh
           chmod 700 /home/ec2-user/.ssh
           chmod 600 /home/ec2-user/.ssh/authorized_keys

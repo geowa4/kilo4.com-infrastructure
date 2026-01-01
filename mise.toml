@@ -1,6 +1,7 @@
 [env]
 PROJECT_NAME = "kilo4"
 DOMAIN_NAME = "kilo4.com"
+GITHUB_USERNAME = ""
 AMI_SSM_PARAMETER = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
 EMAIL_ADDRESS = ""
 

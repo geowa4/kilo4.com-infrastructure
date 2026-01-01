@@ -48,5 +48,4 @@ Common tasks:
 - VPC with public subnet
 - t4g.small EC2 instance (Amazon Linux 2023 ARM64)
 - IAM role with SSM and SES permissions
-- Security group (SSH from single IP)
-- GitHub SSH key provisioning (geowa4)
+- GitHub SSH key provisioning

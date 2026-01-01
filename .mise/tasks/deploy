@@ -142,6 +142,7 @@ create_new_stack() {
         --template-body file://"$TEMPLATE_FILE" \
         --parameters \
         ParameterKey=ProjectName,ParameterValue="${PROJECT_NAME}" \
+        ParameterKey=GitHubUsername,ParameterValue="${GITHUB_USERNAME}" \
         ParameterKey=LatestAmiId,ParameterValue="${AMI_SSM_PARAMETER}" \
         --capabilities CAPABILITY_NAMED_IAM \
         --region "$REGION"

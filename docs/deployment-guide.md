@@ -475,7 +475,7 @@ aws ec2 describe-instances \
 ```
 
 4. **Verify SSH key**:
-The instance uses SSH keys from https://github.com/geowa4.keys. Ensure your local SSH key matches.
+The instance uses SSH keys from https://github.com/<username>.keys. Ensure your local SSH key matches.
 
 ## Manual Operations
 
