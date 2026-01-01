@@ -7,9 +7,38 @@
     base_packages:
       - git
       - golang
+    claude_binary: /home/ec2-user/.local/bin/claude
 
   tasks:
     - name: Install base development packages
       ansible.builtin.dnf:
         name: "{{ base_packages }}"
         state: present
+
+    - name: Check if Claude Code is already installed
+      ansible.builtin.stat:
+        path: "{{ claude_binary }}"
+      register: claude_installed
+      become: true
+      become_user: ec2-user
+
+    - name: Install Claude Code
+      when: not claude_installed.stat.exists
+      become: true
+      become_user: ec2-user
+      block:
+        - name: Download Claude Code installer
+          ansible.builtin.get_url:
+            url: https://claude.ai/install.sh
+            dest: /tmp/claude-install.sh
+            mode: '0755'
+
+        - name: Run Claude Code installer
+          ansible.builtin.command: /tmp/claude-install.sh
+          args:
+            creates: "{{ claude_binary }}"
+
+        - name: Clean up installer
+          ansible.builtin.file:
+            path: /tmp/claude-install.sh
+            state: absent

@@ -347,7 +347,11 @@
                   --query 'Versions[*].{VersionId:VersionId,LastModified:LastModified,Size:Size,IsLatest:IsLatest,StorageClass:StorageClass}' \
                   --output json | jq -r '
                       .[] |
-                      "Version: \(.VersionId)\n  Last Modified: \(.LastModified)\n  Size: \(.Size) bytes\n  Is Latest: \(.IsLatest)\n  Storage Class: \(.StorageClass // \"STANDARD\")\n"
+                      "Version: \(.VersionId)\n" +
+                      "  Last Modified: \(.LastModified)\n" +
+                      "  Size: \(.Size) bytes\n" +
+                      "  Is Latest: \(.IsLatest)\n" +
+                      "  Storage Class: \(.StorageClass // \"STANDARD\")\n"
                   '
           }
 
@@ -360,8 +364,11 @@
 
               echo "Versions of: s3://${S3_BUCKET}/${s3_key}"
               echo ""
-              printf "%-36s  %-24s  %12s  %-8s  %-12s\n" "VERSION ID" "LAST MODIFIED" "SIZE" "LATEST" "STORAGE"
-              printf "%-36s  %-24s  %12s  %-8s  %-12s\n" "------------------------------------" "------------------------" "------------" "--------" "------------"
+              printf "%-36s  %-24s  %12s  %-8s  %-12s\n" \
+                  "VERSION ID" "LAST MODIFIED" "SIZE" "LATEST" "STORAGE"
+              printf "%-36s  %-24s  %12s  %-8s  %-12s\n" \
+                  "------------------------------------" "------------------------" \
+                  "------------" "--------" "------------"
 
               aws s3api list-object-versions \
                   --bucket "${S3_BUCKET}" \
