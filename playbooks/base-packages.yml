@@ -9,7 +9,6 @@
     go_version: "1.25.2"
     go_arch: "linux-arm64"
     claude_binary: /home/ec2-user/.local/bin/claude
-    tailscale_binary: /usr/bin/tailscale
 
   tasks:
     - name: Install base development packages
@@ -58,27 +57,3 @@
 
     # Claude Code installation skipped due to RAM constraints on t4g.small
     # Install manually if needed: curl -sS https://claude.ai/install.sh | bash
-
-    - name: Check if Tailscale is already installed
-      ansible.builtin.stat:
-        path: "{{ tailscale_binary }}"
-      register: tailscale_installed
-
-    - name: Install Tailscale
-      when: not tailscale_installed.stat.exists
-      block:
-        - name: Download Tailscale installer
-          ansible.builtin.get_url:
-            url: https://tailscale.com/install.sh
-            dest: /tmp/tailscale-install.sh
-            mode: '0755'
-
-        - name: Run Tailscale installer
-          ansible.builtin.command: /tmp/tailscale-install.sh
-          args:
-            creates: "{{ tailscale_binary }}"
-
-        - name: Clean up installer
-          ansible.builtin.file:
-            path: /tmp/tailscale-install.sh
-            state: absent

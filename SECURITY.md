@@ -41,5 +41,5 @@ When contributing to this project, please ensure:
 ## Known Security Considerations
 
 - SSH keys are provisioned from GitHub public keys endpoint
-- Third-party install scripts (Claude Code, Tailscale) are downloaded via HTTPS
+- Third-party install scripts (Claude Code) are downloaded via HTTPS
 - All EC2 access is via AWS Systems Manager (no inbound SSH port)
