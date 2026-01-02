@@ -316,6 +316,7 @@
         - "{{ blog_data_dir }}/auxiliary.db"
         - "{{ blog_data_dir }}/data.db"
         - "{{ blog_data_dir }}/types.d.ts"
+        - "{{ blog_data_dir }}/storage/"
       when: backup_conf_stat.stat.exists
 
     # Display deployment summary

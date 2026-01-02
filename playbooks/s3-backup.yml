@@ -174,10 +174,10 @@
                   # Trim whitespace
                   line=$(echo "${line}" | xargs)
 
-                  if [[ -f "${line}" ]]; then
+                  if [[ -e "${line}" ]]; then
                       files+=("${line}")
                   else
-                      log_warn "File does not exist, skipping: ${line}"
+                      log_warn "File or directory does not exist, skipping: ${line}"
                   fi
               done < "${FILES_CONF}"
 
@@ -189,44 +189,68 @@
               echo "${files[@]}"
           }
 
-          # Perform backup for a single file
+          # Perform backup for a single file or directory
           backup_file() {
               local backup_source="$1"
               local filename
               local s3_key
-              local file_size
 
               filename=$(basename "${backup_source}")
               s3_key="${S3_PREFIX}/${filename}"
-              file_size=$(stat -c%s "${backup_source}" 2>/dev/null || stat -f%z "${backup_source}")
 
               log_info "Starting backup:"
               log_info "  Source: ${backup_source}"
-              log_info "  Size: ${file_size} bytes"
-              log_info "  Destination: s3://${S3_BUCKET}/${s3_key}"
 
-              # Copy file to S3 with server-side encryption
-              if aws s3 cp "${backup_source}" "s3://${S3_BUCKET}/${s3_key}" \
-                  --region "${AWS_REGION}" \
-                  --sse aws:kms \
-                  --sse-kms-key-id alias/aws/s3; then
+              # Handle directories differently from files
+              if [[ -d "${backup_source}" ]]; then
+                  log_info "  Type: directory"
+                  log_info "  Destination: s3://${S3_BUCKET}/${s3_key}/"
 
-                  log_info "Backup completed successfully"
-
-                  # Get the version ID of the uploaded file
-                  local version_id
-                  version_id=$(aws s3api head-object \
-                      --bucket "${S3_BUCKET}" \
-                      --key "${s3_key}" \
+                  # Copy directory to S3 recursively with server-side encryption
+                  if aws s3 cp "${backup_source}" "s3://${S3_BUCKET}/${s3_key}/" \
+                      --recursive \
                       --region "${AWS_REGION}" \
-                      --query 'VersionId' \
-                      --output text)
+                      --sse aws:kms \
+                      --sse-kms-key-id alias/aws/s3; then
 
-                  log_info "Version ID: ${version_id}"
-                  return 0
+                      log_info "Backup completed successfully"
+                      return 0
+                  else
+                      log_error "Backup failed for ${backup_source}"
+                      return 1
+                  fi
               else
-                  log_error "Backup failed for ${backup_source}"
-                  return 1
+                  # File backup (original logic)
+                  local file_size
+                  file_size=$(stat -c%s "${backup_source}" 2>/dev/null || stat -f%z "${backup_source}")
+
+                  log_info "  Type: file"
+                  log_info "  Size: ${file_size} bytes"
+                  log_info "  Destination: s3://${S3_BUCKET}/${s3_key}"
+
+                  # Copy file to S3 with server-side encryption
+                  if aws s3 cp "${backup_source}" "s3://${S3_BUCKET}/${s3_key}" \
+                      --region "${AWS_REGION}" \
+                      --sse aws:kms \
+                      --sse-kms-key-id alias/aws/s3; then
+
+                      log_info "Backup completed successfully"
+
+                      # Get the version ID of the uploaded file
+                      local version_id
+                      version_id=$(aws s3api head-object \
+                          --bucket "${S3_BUCKET}" \
+                          --key "${s3_key}" \
+                          --region "${AWS_REGION}" \
+                          --query 'VersionId' \
+                          --output text)
+
+                      log_info "Version ID: ${version_id}"
+                      return 0
+                  else
+                      log_error "Backup failed for ${backup_source}"
+                      return 1
+                  fi
               fi
           }
 
