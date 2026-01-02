@@ -1,0 +1,221 @@
+---
+- name: Install and configure Caddy web server
+  hosts: localhost
+  become: true
+
+  vars:
+    caddy_version: "2.10.2"
+    caddy_binary_url: "https://github.com/caddyserver/caddy/releases/download/v2.10.2/caddy_2.10.2_linux_arm64.tar.gz"
+    caddy_user: caddy
+    caddy_group: caddy
+    caddy_config_dir: /etc/caddy
+    caddy_data_dir: /var/lib/caddy
+    caddy_log_dir: /var/log/caddy
+    web_root: /var/www
+    domain_name: "{{ lookup('env', 'DOMAIN_NAME') | default('kilo4.com', true) }}"
+    acme_email: admin@kilo4.com
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Reload caddy
+      ansible.builtin.systemd:
+        name: caddy
+        state: reloaded
+
+    - name: Restart caddy
+      ansible.builtin.systemd:
+        name: caddy
+        state: restarted
+
+    - name: Reload firewalld
+      ansible.builtin.service:
+        name: firewalld
+        state: reloaded
+
+  tasks:
+    # Create caddy group
+    - name: Create caddy group
+      ansible.builtin.group:
+        name: "{{ caddy_group }}"
+        system: true
+        state: present
+
+    # Create caddy user
+    - name: Create caddy user
+      ansible.builtin.user:
+        name: "{{ caddy_user }}"
+        group: "{{ caddy_group }}"
+        home: "{{ caddy_data_dir }}"
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: false
+        state: present
+
+    # Create required directories
+    - name: Create Caddy directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: "{{ caddy_config_dir }}", owner: root, group: root, mode: "0755"}
+        - {path: "{{ caddy_data_dir }}", owner: "{{ caddy_user }}", group: "{{ caddy_group }}", mode: "0750"}
+        - {path: "{{ caddy_log_dir }}", owner: "{{ caddy_user }}", group: "{{ caddy_group }}", mode: "0750"}
+        - {path: "{{ web_root }}", owner: "{{ caddy_user }}", group: "{{ caddy_group }}", mode: "0755"}
+
+    # Download and install Caddy binary
+    - name: Check if Caddy is already installed with correct version
+      ansible.builtin.command: /usr/local/bin/caddy version
+      register: caddy_version_check
+      failed_when: false
+      changed_when: false
+
+    - name: Download and install Caddy
+      when: caddy_version_check.rc != 0 or caddy_version not in caddy_version_check.stdout
+      block:
+        - name: Download Caddy tarball
+          ansible.builtin.get_url:
+            url: "{{ caddy_binary_url }}"
+            dest: /tmp/caddy.tar.gz
+            mode: "0644"
+
+        - name: Extract Caddy binary
+          ansible.builtin.unarchive:
+            src: /tmp/caddy.tar.gz
+            dest: /tmp
+            remote_src: true
+
+        - name: Install Caddy binary
+          ansible.builtin.copy:
+            src: /tmp/caddy
+            dest: /usr/local/bin/caddy
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Clean up downloaded files
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/caddy.tar.gz
+            - /tmp/caddy
+            - /tmp/LICENSE
+            - /tmp/README.md
+
+    # Set capability for Caddy to bind to privileged ports
+    - name: Set CAP_NET_BIND_SERVICE capability on Caddy binary
+      ansible.builtin.command: setcap cap_net_bind_service=+ep /usr/local/bin/caddy
+      args:
+        creates: /usr/local/bin/caddy
+      when: caddy_version_check.rc != 0 or caddy_version not in caddy_version_check.stdout
+
+    # Create Caddyfile
+    - name: Deploy Caddyfile
+      ansible.builtin.copy:
+        content: |
+          # Caddyfile for {{ domain_name }}
+          # Managed by Ansible - do not edit manually
+
+          {
+              email {{ acme_email }}
+          }
+
+          {{ domain_name }} {
+              root * {{ web_root }}
+              file_server
+
+              log {
+                  output file {{ caddy_log_dir }}/access.log
+              }
+          }
+        dest: "{{ caddy_config_dir }}/Caddyfile"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload caddy
+
+    # Create index.html
+    - name: Create index.html
+      ansible.builtin.copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>{{ domain_name }}</title>
+          </head>
+          <body>
+              <h1>Hello World</h1>
+          </body>
+          </html>
+        dest: "{{ web_root }}/index.html"
+        owner: "{{ caddy_user }}"
+        group: "{{ caddy_group }}"
+        mode: "0644"
+
+    # Deploy systemd service
+    - name: Deploy Caddy systemd service
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Caddy web server
+          Documentation=https://caddyserver.com/docs/
+          After=network.target network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=notify
+          User={{ caddy_user }}
+          Group={{ caddy_group }}
+          ExecStart=/usr/local/bin/caddy run --config {{ caddy_config_dir }}/Caddyfile --adapter caddyfile
+          ExecReload=/usr/local/bin/caddy reload --config {{ caddy_config_dir }}/Caddyfile --adapter caddyfile
+          TimeoutStopSec=5s
+          LimitNOFILE=1048576
+          LimitNPROC=512
+          PrivateTmp=true
+          ProtectSystem=full
+          AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/caddy.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart caddy
+
+    # Configure firewalld for HTTP/HTTPS
+    - name: Allow HTTP in firewalld
+      ansible.posix.firewalld:
+        zone: drop
+        service: http
+        permanent: true
+        state: enabled
+      notify: Reload firewalld
+
+    - name: Allow HTTPS in firewalld
+      ansible.posix.firewalld:
+        zone: drop
+        service: https
+        permanent: true
+        state: enabled
+      notify: Reload firewalld
+
+    # Flush handlers before enabling service
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    # Enable and start Caddy
+    - name: Enable and start Caddy service
+      ansible.builtin.systemd:
+        name: caddy
+        enabled: true
+        state: started
