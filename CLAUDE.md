@@ -174,7 +174,9 @@ uv run ansible-lint playbooks/<name>.yml
 
 - `playbooks/hardening.yml` - System hardening (SSH, firewall, fail2ban)
 - `playbooks/base-packages.yml` - Development tools (git, golang)
+- `playbooks/caddy.yml` - Caddy web server with automatic HTTPS
 - `playbooks/s3-backup.yml` - S3 backup system deployment
+- `playbooks/blog.yml` - Blog application deployment (PocketBase)
 
 ## Systems Manager Integration
 
@@ -344,6 +346,118 @@ Check recent backup logs:
 ```bash
 mise run infra:ssm-connect
 sudo journalctl -u s3-backup.service -n 100
+```
+
+## Blog Application (PocketBase)
+
+### Overview
+The blog is a Go/Hugo application (https://github.com/geowa4/kilo4.com-blog) built with PocketBase that runs as a systemd service behind the Caddy reverse proxy.
+
+- **Binary**: `/usr/local/bin/pocketbase`
+- **Data Directory**: `/var/lib/blog/pb_data/`
+- **Source Code**: `/var/lib/blog/src/kilo4.com-blog`
+- **Port**: 8090 (localhost only, not exposed externally)
+- **User**: `blog` (system user)
+- **Health Endpoint**: `http://127.0.0.1:8090/api/health`
+- **Admin Endpoint**: `http://127.0.0.1:8090/_/` (blocked from external access)
+
+### Deployment
+
+Deploy or update the blog application:
+
+```bash
+mise run infra:run-ansible-playbook playbooks/blog.yml
+```
+
+The playbook performs the following:
+1. Creates `blog` system user if not exists
+2. Installs Hugo via Go (`go install github.com/gohugoio/hugo@latest`)
+3. Clones or updates the blog repository from GitHub
+4. Initializes git submodules (Hugo theme)
+5. Builds the binary on the EC2 instance (`make build`)
+6. Backs up the current binary (if exists)
+7. Deploys the new binary to `/usr/local/bin/pocketbase`
+8. Starts/restarts the `blog` systemd service
+9. Performs health check on `/api/health` endpoint
+10. Automatically rolls back to previous binary if health check fails
+11. Updates Caddy configuration to proxy traffic to the blog
+12. Adds blog data files to S3 backup configuration
+
+### Health Check and Rollback
+
+The deployment process includes automatic health checks:
+- After deployment, the playbook polls `http://127.0.0.1:8090/api/health` (30 retries, 2 seconds apart)
+- If the health check fails:
+  - Finds the most recent backup binary from `/var/lib/blog/backups/`
+  - Restores the previous binary
+  - Restarts the service
+  - Verifies the rollback succeeded
+  - Fails the playbook with an error message
+
+### Accessing the Admin Interface
+
+The admin endpoint (`/_/`) is **blocked from external access** for security. Caddy returns a 404 for any requests to `/_/*` paths.
+
+To access the admin interface, use SSM port forwarding:
+
+```bash
+# Start port forwarding session
+mise run infra:port-forward 8090 localhost 8090
+
+# In your browser, navigate to:
+# http://localhost:8090/_/
+```
+
+The port forwarding session will remain active until you press `Ctrl+C`.
+
+### Caddy Reverse Proxy Configuration
+
+The blog playbook automatically configures Caddy (`/etc/caddy/Caddyfile`) to:
+- Proxy all public requests to the blog backend on `127.0.0.1:8090`
+- Block the admin endpoint `/_/*` from external access (returns 404)
+- Provide automatic HTTPS via Let's Encrypt
+
+### Data Backup
+
+The blog's database files are automatically added to the S3 backup configuration (`/etc/s3-backup/files.conf`):
+- `/var/lib/blog/pb_data/auxiliary.db` - Auxiliary database
+- `/var/lib/blog/pb_data/data.db` - Main database
+- `/var/lib/blog/pb_data/types.d.ts` - TypeScript type definitions
+
+These files are backed up daily at 02:00 via the existing S3 backup system.
+
+To manually trigger a backup:
+```bash
+mise run infra:backup-run
+```
+
+To list or restore backup versions:
+```bash
+# List all versions
+mise run infra:backup-list-versions data.db
+
+# Restore a specific version
+mise run infra:backup-restore data.db <version-id>
+```
+
+### Service Management
+
+Check blog service status:
+```bash
+mise run infra:ssm-connect
+sudo systemctl status blog
+```
+
+View blog logs:
+```bash
+mise run infra:ssm-connect
+sudo journalctl -u blog -n 100 -f
+```
+
+Restart the blog service:
+```bash
+mise run infra:ssm-connect
+sudo systemctl restart blog
 ```
 
 ## Important Constraints

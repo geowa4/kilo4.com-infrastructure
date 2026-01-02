@@ -282,6 +282,12 @@ Resources:
     Properties:
       ImageId: !Ref LatestAmiId
       InstanceType: t4g.small
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 50
+            VolumeType: gp3
+            DeleteOnTermination: true
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref InstanceSecurityGroup

@@ -1,0 +1,331 @@
+---
+- name: Deploy kilo4.com-blog application
+  hosts: localhost
+  become: true
+
+  vars:
+    blog_user: blog
+    blog_group: blog
+    blog_home: /var/lib/blog
+    blog_data_dir: /var/lib/blog/pb_data
+    blog_backup_dir: /var/lib/blog/backups
+    blog_src_dir: /var/lib/blog/src
+    blog_repo_dir: /var/lib/blog/src/kilo4.com-blog
+    blog_binary_path: /usr/local/bin/pocketbase
+    blog_port: 8090
+    blog_health_endpoint: "http://127.0.0.1:8090/api/health"
+    blog_repo: https://github.com/geowa4/kilo4.com-blog
+    health_check_retries: 30
+    health_check_delay: 2
+    domain_name: "{{ lookup('env', 'DOMAIN_NAME') | default('kilo4.com', true) }}"
+    acme_email: admin@kilo4.com
+    caddy_config_dir: /etc/caddy
+    caddy_log_dir: /var/log/caddy
+    backup_files_conf: /etc/s3-backup/files.conf
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart blog
+      ansible.builtin.systemd:
+        name: blog
+        state: restarted
+
+    - name: Reload caddy
+      ansible.builtin.systemd:
+        name: caddy
+        state: reloaded
+
+  tasks:
+    # Create blog group
+    - name: Create blog group
+      ansible.builtin.group:
+        name: "{{ blog_group }}"
+        system: true
+        state: present
+
+    # Create blog user
+    - name: Create blog user
+      ansible.builtin.user:
+        name: "{{ blog_user }}"
+        group: "{{ blog_group }}"
+        home: "{{ blog_home }}"
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: true
+        state: present
+
+    # Create required directories
+    - name: Create blog directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: "{{ blog_data_dir }}", owner: "{{ blog_user }}", group: "{{ blog_group }}", mode: "0750"}
+        - {path: "{{ blog_backup_dir }}", owner: root, group: root, mode: "0750"}
+        - {path: "{{ blog_src_dir }}", owner: "{{ blog_user }}", group: "{{ blog_group }}", mode: "0750"}
+
+    # Install Hugo from pre-built binary
+    - name: Check if Hugo is installed
+      ansible.builtin.command: hugo version
+      register: hugo_version_check
+      failed_when: false
+      changed_when: false
+
+    - name: Install Hugo from pre-built binary
+      when: hugo_version_check.rc != 0
+      block:
+        - name: Download Hugo binary
+          ansible.builtin.get_url:
+            url: "https://github.com/gohugoio/hugo/releases/download/v0.154.2/hugo_0.154.2_linux-arm64.tar.gz"
+            dest: /tmp/hugo.tar.gz
+            mode: "0644"
+
+        - name: Extract Hugo binary
+          ansible.builtin.unarchive:
+            src: /tmp/hugo.tar.gz
+            dest: /tmp
+            remote_src: true
+
+        - name: Install Hugo binary
+          ansible.builtin.copy:
+            src: /tmp/hugo
+            dest: /usr/local/bin/hugo
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Clean up Hugo download
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/hugo.tar.gz
+            - /tmp/hugo
+            - /tmp/LICENSE
+            - /tmp/README.md
+
+    # Clone or update repository with submodules
+    - name: Clone/update blog repository with submodules  # noqa: latest[git]
+      ansible.builtin.git:
+        repo: "{{ blog_repo }}"
+        dest: "{{ blog_repo_dir }}"
+        version: HEAD
+        update: true
+        force: true
+        recursive: true
+      become: true
+      become_user: "{{ blog_user }}"
+
+    # Build the blog binary
+    - name: Build blog binary
+      ansible.builtin.command: make build
+      args:
+        chdir: "{{ blog_repo_dir }}"
+      environment:
+        HOME: "{{ blog_home }}"
+        PATH: "/usr/local/go/bin:/usr/local/bin:{{ ansible_env.PATH }}"
+      become: true
+      become_user: "{{ blog_user }}"
+      changed_when: true
+
+    # Backup current binary if exists
+    - name: Check if current binary exists
+      ansible.builtin.stat:
+        path: "{{ blog_binary_path }}"
+      register: current_binary
+
+    - name: Backup current binary before upgrade
+      ansible.builtin.copy:
+        src: "{{ blog_binary_path }}"
+        dest: "{{ blog_backup_dir }}/pocketbase.backup.{{ ansible_date_time.iso8601_basic_short }}"
+        remote_src: true
+        mode: "0755"
+      when: current_binary.stat.exists
+
+    # Install new binary
+    - name: Install blog binary
+      ansible.builtin.copy:
+        src: "{{ blog_repo_dir }}/pocketbase"
+        dest: "{{ blog_binary_path }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      register: binary_installed
+
+    # Deploy systemd service
+    - name: Deploy blog systemd service
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=kilo4.com Blog (PocketBase)
+          Documentation=https://pocketbase.io/docs/
+          After=network.target network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User={{ blog_user }}
+          Group={{ blog_group }}
+          WorkingDirectory={{ blog_home }}
+          ExecStart={{ blog_binary_path }} serve --http=127.0.0.1:{{ blog_port }} --dir={{ blog_data_dir }}
+          Restart=always
+          RestartSec=5
+
+          # Security hardening
+          NoNewPrivileges=true
+          PrivateTmp=true
+          ProtectSystem=strict
+          ProtectHome=true
+          ReadWritePaths={{ blog_data_dir }}
+
+          # Resource limits
+          LimitNOFILE=4096
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/blog.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart blog
+
+    # Flush handlers to start service
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    # Enable and start blog service
+    - name: Enable and start blog service
+      ansible.builtin.systemd:
+        name: blog
+        enabled: true
+        state: started
+
+    # Health check with rollback
+    - name: Wait for blog service to be healthy
+      ansible.builtin.uri:
+        url: "{{ blog_health_endpoint }}"
+        method: GET
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+      ignore_errors: true
+
+    # Rollback block if health check fails
+    - name: Rollback to previous binary if health check failed
+      when: health_check.failed | default(false)
+      block:
+        - name: Find most recent backup
+          ansible.builtin.find:
+            paths: "{{ blog_backup_dir }}"
+            patterns: "pocketbase.backup.*"
+          register: backup_files
+
+        - name: Fail if no backup available
+          ansible.builtin.fail:
+            msg: "Health check failed and no backup binary available for rollback"
+          when: backup_files.files | length == 0
+
+        - name: Get latest backup file
+          ansible.builtin.set_fact:
+            latest_backup: "{{ (backup_files.files | sort(attribute='mtime') | last).path }}"
+          when: backup_files.files | length > 0
+
+        - name: Restore previous binary
+          ansible.builtin.copy:
+            src: "{{ latest_backup }}"
+            dest: "{{ blog_binary_path }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Restart blog with restored binary
+          ansible.builtin.systemd:
+            name: blog
+            state: restarted
+
+        - name: Verify rollback health check
+          ansible.builtin.uri:
+            url: "{{ blog_health_endpoint }}"
+            method: GET
+            status_code: 200
+          register: rollback_health
+          until: rollback_health.status == 200
+          retries: 10
+          delay: 2
+
+        - name: Report rollback status
+          ansible.builtin.fail:
+            msg: |
+              Deployment failed. Rolled back to previous version.
+              New binary failed health check. Please investigate.
+
+    # Update Caddyfile to proxy to blog
+    - name: Deploy updated Caddyfile with blog proxy
+      ansible.builtin.copy:
+        content: |
+          # Caddyfile for {{ domain_name }}
+          # Managed by Ansible - do not edit manually
+
+          {
+              email {{ acme_email }}
+          }
+
+          {{ domain_name }} {
+              # Block admin endpoint from external access
+              @admin path /_/*
+              respond @admin "Not Found" 404
+
+              # Proxy all requests to blog backend
+              reverse_proxy 127.0.0.1:{{ blog_port }}
+
+              log {
+                  output file {{ caddy_log_dir }}/access.log
+              }
+          }
+        dest: "{{ caddy_config_dir }}/Caddyfile"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload caddy
+
+    # Add pb_data files to S3 backup configuration
+    - name: Check if S3 backup files.conf exists
+      ansible.builtin.stat:
+        path: "{{ backup_files_conf }}"
+      register: backup_conf_stat
+
+    - name: Add blog data files to S3 backup
+      ansible.builtin.lineinfile:
+        path: "{{ backup_files_conf }}"
+        line: "{{ item }}"
+        state: present
+      loop:
+        - "{{ blog_data_dir }}/auxiliary.db"
+        - "{{ blog_data_dir }}/data.db"
+        - "{{ blog_data_dir }}/types.d.ts"
+      when: backup_conf_stat.stat.exists
+
+    # Display deployment summary
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "Blog deployment complete!"
+          - "Service: blog.service"
+          - "Binary: {{ blog_binary_path }}"
+          - "Data directory: {{ blog_data_dir }}"
+          - "Health endpoint: {{ blog_health_endpoint }}"
+          - "Admin access: Use SSM port forwarding (mise run infra:port-forward 8090 localhost 8090)"
+          - "Then access http://localhost:8090/_/"

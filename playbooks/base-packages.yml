@@ -6,7 +6,8 @@
   vars:
     base_packages:
       - git
-      - golang
+    go_version: "1.25.2"
+    go_arch: "linux-arm64"
     claude_binary: /home/ec2-user/.local/bin/claude
     tailscale_binary: /usr/bin/tailscale
 
@@ -16,33 +17,47 @@
         name: "{{ base_packages }}"
         state: present
 
-    - name: Check if Claude Code is already installed
-      ansible.builtin.stat:
-        path: "{{ claude_binary }}"
-      register: claude_installed
-      become: true
-      become_user: ec2-user
+    # Install Go from official binaries (newer than dnf package)
+    - name: Check if Go is installed with correct version
+      ansible.builtin.command: /usr/local/go/bin/go version
+      register: go_version_check
+      failed_when: false
+      changed_when: false
 
-    - name: Install Claude Code
-      when: not claude_installed.stat.exists
-      become: true
-      become_user: ec2-user
+    - name: Install Go from official binaries
+      when: go_version_check.rc != 0 or go_version not in go_version_check.stdout
       block:
-        - name: Download Claude Code installer
+        - name: Download Go binary
           ansible.builtin.get_url:
-            url: https://claude.ai/install.sh
-            dest: /tmp/claude-install.sh
-            mode: '0755'
+            url: "https://go.dev/dl/go{{ go_version }}.{{ go_arch }}.tar.gz"
+            dest: /tmp/go.tar.gz
+            mode: "0644"
 
-        - name: Run Claude Code installer
-          ansible.builtin.command: /tmp/claude-install.sh
-          args:
-            creates: "{{ claude_binary }}"
-
-        - name: Clean up installer
+        - name: Remove old Go installation
           ansible.builtin.file:
-            path: /tmp/claude-install.sh
+            path: /usr/local/go
             state: absent
+
+        - name: Extract Go binary
+          ansible.builtin.unarchive:
+            src: /tmp/go.tar.gz
+            dest: /usr/local
+            remote_src: true
+
+        - name: Clean up Go download
+          ansible.builtin.file:
+            path: /tmp/go.tar.gz
+            state: absent
+
+        - name: Add Go to PATH
+          ansible.builtin.copy:
+            content: |
+              export PATH=$PATH:/usr/local/go/bin
+            dest: /etc/profile.d/go.sh
+            mode: "0644"
+
+    # Claude Code installation skipped due to RAM constraints on t4g.small
+    # Install manually if needed: curl -sS https://claude.ai/install.sh | bash
 
     - name: Check if Tailscale is already installed
       ansible.builtin.stat:
