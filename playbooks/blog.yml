@@ -159,6 +159,7 @@
         group: root
         mode: "0755"
       register: binary_installed
+      notify: Restart blog
 
     # Deploy systemd service
     - name: Deploy blog systemd service
